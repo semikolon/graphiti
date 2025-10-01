@@ -20,6 +20,107 @@ The Graphiti MCP server exposes the following key high-level functions of Graphi
 - **Search Capabilities**: Search for facts (edges) and node summaries using semantic and hybrid search
 - **Group Management**: Organize and manage groups of related data with group_id filtering
 - **Graph Maintenance**: Clear the graph and rebuild indices
+- **Explicit Scoping**: Three-tier scope system (project/global/cross-project) preventing accidental data leaks
+
+## Explicit Scoping
+
+Graphiti MCP implements **Explicit Scoping** to prevent accidental data leaks between projects. Scope is encoded in tool names, not runtime parameters, making LLM intent explicit and safe.
+
+### Why Explicit Scoping?
+
+**Problem**: Previous versions allowed LLMs to override `group_id` parameters, enabling accidental cross-project data contamination despite careful wrapper-based scoping.
+
+**Solution**: Three scope levels with distinct tool names, where scope is explicit and cannot be overridden.
+
+### Tool Scopes
+
+#### Project-Scoped (Default)
+Uses current project's memory graph only. Safe for normal development.
+
+**Tools**:
+- `add_memory(name, body)` - Add episode to current project
+- `search_nodes(query)` - Search nodes in current project
+- `search_facts(query)` - Search facts in current project
+
+**Scoping**: Uses `group_id` from config (set by shims wrapper based on git project). Cannot leak data to other projects.
+
+**Example**:
+```python
+# In dotfiles project (group_id="dotfiles")
+add_memory(
+    name="Configuration Update",
+    episode_body="Updated zshrc with new aliases"
+)
+# Data goes to "dotfiles" group only
+```
+
+#### Global-Scoped (Explicit)
+Uses shared "default" memory graph. For cross-project general knowledge.
+
+**Tools**:
+- `add_global_memory(name, body)` - Add to global graph
+- `search_global_nodes(query)` - Search global nodes
+- `search_global_facts(query)` - Search global facts
+
+**Scoping**: Hardcoded to `'default'` group. Intent is explicit in tool name.
+
+**Example**:
+```python
+# Any project context
+add_global_memory(
+    name="Python Best Practices",
+    episode_body="Always use type hints and docstrings"
+)
+# Data goes to shared "default" group
+```
+
+#### Cross-Project (Explicit, Intentional)
+Explicit list of projects for pattern comparison. Rare use case.
+
+**Tools**:
+- `search_cross_project_nodes(query, projects)` - Search across projects
+- `search_cross_project_facts(query, projects)` - Search facts across projects
+
+**Scoping**: Requires explicit `projects` list. Fails if empty.
+
+**Example**:
+```python
+# Compare authentication patterns across projects
+search_cross_project_nodes(
+    query="authentication implementation",
+    projects=["dotfiles", "kimonokittens", "brf-auto"]
+)
+```
+
+### Trust Model Guarantees
+
+✅ **Project Isolation**: Default tools cannot access other projects
+✅ **Explicit Intent**: Global/cross-project intent is obvious in tool name
+✅ **Parameter Safety**: No `group_id` parameters can bypass scoping
+✅ **Shims Integration**: Works seamlessly with wrapper-based GROUP_ID management
+
+### Migration from Old Tools
+
+Old tools (with `group_id` parameters) have been replaced:
+
+| Old Tool | New Project-Scoped | New Global-Scoped | New Cross-Project |
+|----------|-------------------|-------------------|-------------------|
+| `add_memory(group_id=?)` | `add_memory()` | `add_global_memory()` | N/A |
+| `search_memory_nodes(group_ids=?)` | `search_nodes()` | `search_global_nodes()` | `search_cross_project_nodes(projects)` |
+| `search_memory_facts(group_ids=?)` | `search_facts()` | `search_global_facts()` | `search_cross_project_facts(projects)` |
+
+### Testing
+
+Run explicit scoping unit tests:
+```bash
+pytest test_explicit_scoping.py -v
+```
+
+Tests verify:
+- Project-scoped tools use `config.group_id` only
+- Global-scoped tools use hardcoded `'default'` group
+- Cross-project tools require explicit project list
+- LLMs cannot bypass project isolation via parameters
 
 ## Quick Start
 
