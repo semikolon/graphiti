@@ -21,6 +21,8 @@ The Graphiti MCP server exposes the following key high-level functions of Graphi
 - **Group Management**: Organize and manage groups of related data with group_id filtering
 - **Graph Maintenance**: Clear the graph and rebuild indices
 - **Explicit Scoping**: Three-tier scope system (project/global/cross-project) preventing accidental data leaks
+- **Custom Entities**: Supports ProgrammingLanguage, Project, HomeAssistantDevice entity types for structured ontology
+- **FalkorDB Backend**: 69-254x faster than Neo4j with sub-10ms query latency
 
 ## Explicit Scoping
 
@@ -92,6 +94,14 @@ search_cross_project_nodes(
 )
 ```
 
+**Limit Behavior**: `max_nodes`/`max_facts` applies **globally** across all projects.
+
+- Querying 3 projects with `max_nodes=10` returns **10 total results**, not 30
+- For balanced representation, use proportionally higher limits (e.g., `max_nodes=30` for 3 projects)
+- Limit is applied after merging results from all specified group_ids
+
+**Technical**: Graphiti sets `search_config.limit = num_results` once, then queries all group_ids. FalkorDB executes: `WHERE origin.group_id IN $group_ids LIMIT $limit`
+
 ### Trust Model Guarantees
 
 ✅ **Project Isolation**: Default tools cannot access other projects
@@ -99,15 +109,26 @@ search_cross_project_nodes(
 ✅ **Parameter Safety**: No `group_id` parameters can bypass scoping
 ✅ **Shims Integration**: Works seamlessly with wrapper-based GROUP_ID management
 
+### Performance
+
+**Database**: FalkorDB backend provides 69-254x performance improvement over Neo4j
+
+**Cross-Project Queries**:
+- Single project: Sub-10ms p99 latency
+- Multiple projects: Linear scaling expected
+- Recommended: Up to 10 projects for interactive queries
+
+**Real-world validation ongoing** - performance characteristics will be updated based on production usage.
+
 ### Migration from Old Tools
 
 Old tools (with `group_id` parameters) have been replaced:
 
-| Old Tool | New Project-Scoped | New Global-Scoped | New Cross-Project |
-|----------|-------------------|-------------------|-------------------|
-| `add_memory(group_id=?)` | `add_memory()` | `add_global_memory()` | N/A |
-| `search_memory_nodes(group_ids=?)` | `search_nodes()` | `search_global_nodes()` | `search_cross_project_nodes(projects)` |
-| `search_memory_facts(group_ids=?)` | `search_facts()` | `search_global_facts()` | `search_cross_project_facts(projects)` |
+| Old Tool | New Project-Scoped | New Global-Scoped | New Cross-Project | Why Changed |
+|----------|-------------------|-------------------|-------------------|-------------|
+| `add_memory(group_id=?)` | `add_memory()` | `add_global_memory()` | N/A | Prevent accidental cross-project data leaks via LLM parameter override |
+| `search_memory_nodes(group_ids=?)` | `search_nodes()` | `search_global_nodes()` | `search_cross_project_nodes(projects)` | Make cross-project intent explicit in tool name, not hidden in parameters |
+| `search_memory_facts(group_ids=?)` | `search_facts()` | `search_global_facts()` | `search_cross_project_facts(projects)` | Enforce trust model through API design, not runtime validation |
 
 ### Testing
 
