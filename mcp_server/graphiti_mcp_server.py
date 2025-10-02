@@ -18,7 +18,15 @@ from mcp.server.fastmcp import FastMCP
 from openai import AsyncAzureOpenAI
 from pydantic import BaseModel, Field
 
-from custom_entities import HomeAssistantDevice, ProgrammingLanguage, Project
+from custom_entities import (
+    Framework,
+    Library,
+    Pattern,
+    ProgrammingLanguage,
+    Project,
+    ServiceAPI,
+    Topic,
+)
 from graphiti_core import Graphiti
 from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.edges import EntityEdge
@@ -129,7 +137,11 @@ ENTITY_TYPES: dict[str, BaseModel] = {
     'Procedure': Procedure,  # type: ignore
     'ProgrammingLanguage': ProgrammingLanguage,  # type: ignore
     'Project': Project,  # type: ignore
-    'HomeAssistantDevice': HomeAssistantDevice,  # type: ignore
+    'Library': Library,  # type: ignore
+    'Framework': Framework,  # type: ignore
+    'ServiceAPI': ServiceAPI,  # type: ignore
+    'Pattern': Pattern,  # type: ignore
+    'Topic': Topic,  # type: ignore
 }
 
 
