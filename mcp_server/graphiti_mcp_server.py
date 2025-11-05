@@ -664,25 +664,46 @@ def get_effective_group_id(ctx: Context | None) -> str:
     Returns:
         The group_id to use for Graphiti operations
     """
+    # DEBUG: Log Context structure
+    logger.info(f"DEBUG get_effective_group_id - ctx is None: {ctx is None}")
+
     # Try to extract from SSE connection query params
     if ctx is not None:
         try:
-            request = ctx.request_context.request
-            if request and hasattr(request, 'query_params'):
-                connection_group_id = request.query_params.get('group_id')
-                if connection_group_id and connection_group_id.strip():
-                    logger.info(f"Using connection-specific group_id: {connection_group_id}")
-                    return connection_group_id
+            logger.info(f"DEBUG - ctx type: {type(ctx)}")
+            logger.info(f"DEBUG - ctx attributes: {dir(ctx)}")
+
+            # Check request_context
+            if hasattr(ctx, 'request_context'):
+                logger.info(f"DEBUG - request_context type: {type(ctx.request_context)}")
+                logger.info(f"DEBUG - request_context attributes: {dir(ctx.request_context)}")
+
+                request = ctx.request_context.request
+                logger.info(f"DEBUG - request type: {type(request)}")
+                logger.info(f"DEBUG - request attributes: {dir(request) if request else 'None'}")
+
+                if request and hasattr(request, 'query_params'):
+                    logger.info(f"DEBUG - query_params: {request.query_params}")
+                    connection_group_id = request.query_params.get('group_id')
+                    if connection_group_id and connection_group_id.strip():
+                        logger.info(f"Using connection-specific group_id: {connection_group_id}")
+                        return connection_group_id
+                else:
+                    logger.info("DEBUG - request has no query_params attribute")
+            else:
+                logger.info("DEBUG - ctx has no request_context attribute")
         except (ValueError, AttributeError) as e:
-            logger.debug(f"Could not extract group_id from context: {e}")
+            logger.info(f"DEBUG - Exception extracting group_id: {e}")
+            import traceback
+            logger.info(f"DEBUG - Traceback: {traceback.format_exc()}")
 
     # Fall back to config.group_id (from CLI --group-id)
     if config.group_id:
-        logger.debug(f"Using config group_id: {config.group_id}")
+        logger.info(f"Using config group_id: {config.group_id}")
         return config.group_id
 
     # Final fallback
-    logger.debug("Using default group_id")
+    logger.info("Using default group_id (fallback)")
     return "default"
 
 
