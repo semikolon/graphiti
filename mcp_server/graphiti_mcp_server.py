@@ -14,7 +14,7 @@ from typing import Any, TypedDict, cast
 
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from openai import AsyncAzureOpenAI
 from pydantic import BaseModel, Field
 
@@ -648,6 +648,42 @@ async def initialize_graphiti():
         raise
 
 
+def get_effective_group_id(ctx: Context | None) -> str:
+    """Extract group_id from SSE connection query params with fallback logic.
+
+    Priority order:
+    1. Connection-specific group_id (from SSE URL query param ?group_id=...)
+    2. Config group_id (from CLI --group-id flag)
+    3. Hard-coded "default"
+
+    Args:
+        ctx: FastMCP Context object (may be None if called outside request)
+
+    Returns:
+        The group_id to use for Graphiti operations
+    """
+    # Try to extract from SSE connection query params
+    if ctx is not None:
+        try:
+            request = ctx.request_context.request
+            if request and hasattr(request, 'query_params'):
+                connection_group_id = request.query_params.get('group_id')
+                if connection_group_id and connection_group_id.strip():
+                    logger.info(f"Using connection-specific group_id: {connection_group_id}")
+                    return connection_group_id
+        except (ValueError, AttributeError) as e:
+            logger.debug(f"Could not extract group_id from context: {e}")
+
+    # Fall back to config.group_id (from CLI --group-id)
+    if config.group_id:
+        logger.debug(f"Using config group_id: {config.group_id}")
+        return config.group_id
+
+    # Final fallback
+    logger.debug("Using default group_id")
+    return "default"
+
+
 def format_fact_result(edge: EntityEdge) -> dict[str, Any]:
     """Format an entity edge into a readable result.
 
@@ -714,6 +750,7 @@ async def process_episode_queue(group_id: str):
 async def add_memory(
     name: str,
     episode_body: str,
+    ctx: Context,
     source: str = 'text',
     source_description: str = '',
     uuid: str | None = None,
@@ -785,8 +822,8 @@ async def add_memory(
         elif source.lower() == 'json':
             source_type = EpisodeType.json
 
-        # Use ONLY config.group_id for project scoping (no parameter override)
-        effective_group_id = config.group_id
+        # Use connection-specific group_id (from SSE query param)
+        effective_group_id = get_effective_group_id(ctx)
 
         # Cast group_id to str to satisfy type checker
         # The Graphiti client expects a str for group_id, not Optional[str]
@@ -850,6 +887,7 @@ async def add_memory(
 async def add_global_memory(
     name: str,
     episode_body: str,
+    ctx: Context,
     source: str = 'text',
     source_description: str = '',
     uuid: str | None = None,
@@ -956,6 +994,7 @@ async def add_global_memory(
 @mcp.tool()
 async def search_nodes(
     query: str,
+    ctx: Context,
     max_nodes: int = 10,
     center_node_uuid: str | None = None,
     entity: str = '',  # cursor seems to break with None
@@ -979,8 +1018,9 @@ async def search_nodes(
         return ErrorResponse(error='Graphiti client not initialized')
 
     try:
-        # Use ONLY config.group_id for project scoping (no parameter override)
-        effective_group_ids = [config.group_id] if config.group_id else []
+        # Use connection-specific group_id (from SSE query param)
+        effective_group_id = get_effective_group_id(ctx)
+        effective_group_ids = [effective_group_id]
 
         # Configure the search
         if center_node_uuid is not None:
@@ -1035,6 +1075,7 @@ async def search_nodes(
 @mcp.tool()
 async def search_global_nodes(
     query: str,
+    ctx: Context,
     max_nodes: int = 10,
     center_node_uuid: str | None = None,
     entity: str = '',
@@ -1103,6 +1144,7 @@ async def search_global_nodes(
 @mcp.tool()
 async def search_facts(
     query: str,
+    ctx: Context,
     max_facts: int = 10,
     center_node_uuid: str | None = None,
 ) -> FactSearchResponse | ErrorResponse:
@@ -1126,8 +1168,9 @@ async def search_facts(
         if max_facts <= 0:
             return ErrorResponse(error='max_facts must be a positive integer')
 
-        # Use ONLY config.group_id for project scoping (no parameter override)
-        effective_group_ids = [config.group_id] if config.group_id else []
+        # Use connection-specific group_id (from SSE query param)
+        effective_group_id = get_effective_group_id(ctx)
+        effective_group_ids = [effective_group_id]
 
         # We've already checked that graphiti_client is not None above
         assert graphiti_client is not None
@@ -1156,6 +1199,7 @@ async def search_facts(
 @mcp.tool()
 async def search_global_facts(
     query: str,
+    ctx: Context,
     max_facts: int = 10,
     center_node_uuid: str | None = None,
 ) -> FactSearchResponse | ErrorResponse:
@@ -1210,6 +1254,7 @@ async def search_global_facts(
 async def search_cross_project_nodes(
     query: str,
     projects: list[str],
+    ctx: Context,
     max_nodes: int = 10,
     center_node_uuid: str | None = None,
     entity: str = '',
@@ -1293,6 +1338,7 @@ async def search_cross_project_nodes(
 async def search_cross_project_facts(
     query: str,
     projects: list[str],
+    ctx: Context,
     max_facts: int = 10,
     center_node_uuid: str | None = None,
 ) -> FactSearchResponse | ErrorResponse:
