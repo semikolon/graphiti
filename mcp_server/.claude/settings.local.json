@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/fredrikbranstrom/**)",
+      "Bash(pgrep:*)",
+      "Bash(cat:*)",
+      "Read(//private/tmp/**)",
+      "Read(//tmp/**)",
+      "Bash(docker exec:*)",
+      "Bash(lsof:*)",
+      "Bash(python3:*)",
+      "Bash(source:*)",
+      "Bash(python:*)",
+      "Bash(GRAPHITI_GROUP_ID=test python -m graphiti_mcp_server --help)",
+      "Bash(launchctl:*)",
+      "Bash(uv pip:*)",
+      "Bash(git describe:*)",
+      "WebSearch",
+      "WebFetch(domain:docs.falkordb.com)",
+      "WebFetch(domain:pypi.org)",
+      "Bash(curl:*)",
+      "Bash(docker run:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker rm:*)",
+      "Bash(find:*)",
+      "mcp__graphiti__add_memory",
+      "mcp__graphiti__search_memory_facts",
+      "mcp__graphiti__search_memory_nodes",
+      "mcp__graphiti__get_episodes",
+      "mcp__zen__consensus",
+      "Bash(npm search:*)",
+      "Bash(npx:*)",
+      "Bash(sed:*)",
+      "mcp__exa__deep_researcher_start",
+      "mcp__exa__deep_researcher_check",
+      "mcp__zen__chat",
+      "Bash(echo $PATH)",
+      "mcp__zen__thinkdeep"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

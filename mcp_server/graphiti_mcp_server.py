@@ -10,7 +10,9 @@ import os
 import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, TypedDict, cast
+from typing import Any, cast
+
+from typing_extensions import TypedDict
 
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
