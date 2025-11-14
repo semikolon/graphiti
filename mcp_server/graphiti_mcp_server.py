@@ -651,12 +651,13 @@ async def initialize_graphiti():
 
 
 def get_effective_group_id(ctx: Context | None) -> str:
-    """Extract group_id from SSE connection query params with fallback logic.
+    """Extract group_id from SSE connection with fallback logic.
 
     Priority order:
-    1. Connection-specific group_id (from SSE URL query param ?group_id=...)
-    2. Config group_id (from CLI --group-id flag)
-    3. Hard-coded "default"
+    1. Custom HTTP header X-Graphiti-Group-Id (sent with every MCP message)
+    2. SSE URL query parameter ?group_id=... (handshake only, kept for compatibility)
+    3. Config group_id (from CLI --group-id flag)
+    4. Hard-coded "default"
 
     Args:
         ctx: FastMCP Context object (may be None if called outside request)
@@ -664,61 +665,33 @@ def get_effective_group_id(ctx: Context | None) -> str:
     Returns:
         The group_id to use for Graphiti operations
     """
-    # DEBUG: Log Context structure
-    logger.info(f"DEBUG get_effective_group_id - ctx is None: {ctx is None}")
-
-    # Try to extract from SSE connection query params
+    # Priority 1: Extract from custom header (sent with every MCP message)
     if ctx is not None:
         try:
-            logger.info(f"DEBUG - ctx type: {type(ctx)}")
-            logger.info(f"DEBUG - ctx attributes: {dir(ctx)}")
+            request = ctx.request_context.request
+            if request and hasattr(request, 'headers'):
+                # Headers are case-insensitive, try both forms
+                header_group_id = request.headers.get('X-Graphiti-Group-Id') or request.headers.get('x-graphiti-group-id')
+                if header_group_id and header_group_id.strip():
+                    logger.debug(f"Using header-based group_id: {header_group_id}")
+                    return header_group_id
 
-            # Check request_context
-            if hasattr(ctx, 'request_context'):
-                logger.info(f"DEBUG - request_context type: {type(ctx.request_context)}")
-                logger.info(f"DEBUG - request_context attributes: {dir(ctx.request_context)}")
-
-                request = ctx.request_context.request
-                logger.info(f"DEBUG - request type: {type(request)}")
-                logger.info(f"DEBUG - request attributes: {dir(request) if request else 'None'}")
-
-                if request and hasattr(request, 'query_params'):
-                    logger.info(f"DEBUG - query_params: {request.query_params}")
-
-                # Check headers for X-Graphiti-Group-Id
-                if request and hasattr(request, 'headers'):
-                    logger.info(f"DEBUG - headers type: {type(request.headers)}")
-                    logger.info(f"DEBUG - headers dict: {dict(request.headers)}")
-
-                    # Try to get X-Graphiti-Group-Id header
-                    header_group_id = request.headers.get('X-Graphiti-Group-Id') or request.headers.get('x-graphiti-group-id')
-                    if header_group_id and header_group_id.strip():
-                        logger.info(f"Using header-based group_id: {header_group_id}")
-                        return header_group_id
-                    else:
-                        logger.info("DEBUG - No X-Graphiti-Group-Id header found")
-
-                if request and hasattr(request, 'query_params'):
-                    connection_group_id = request.query_params.get('group_id')
-                    if connection_group_id and connection_group_id.strip():
-                        logger.info(f"Using connection-specific group_id: {connection_group_id}")
-                        return connection_group_id
-                else:
-                    logger.info("DEBUG - request has no query_params attribute")
-            else:
-                logger.info("DEBUG - ctx has no request_context attribute")
+            # Priority 2: Fall back to query parameter (SSE handshake only)
+            if request and hasattr(request, 'query_params'):
+                connection_group_id = request.query_params.get('group_id')
+                if connection_group_id and connection_group_id.strip():
+                    logger.debug(f"Using query-parameter group_id: {connection_group_id}")
+                    return connection_group_id
         except (ValueError, AttributeError) as e:
-            logger.info(f"DEBUG - Exception extracting group_id: {e}")
-            import traceback
-            logger.info(f"DEBUG - Traceback: {traceback.format_exc()}")
+            logger.debug(f"Could not extract group_id from context: {e}")
 
-    # Fall back to config.group_id (from CLI --group-id)
+    # Priority 3: Fall back to config.group_id (from CLI --group-id)
     if config.group_id:
-        logger.info(f"Using config group_id: {config.group_id}")
+        logger.debug(f"Using config group_id: {config.group_id}")
         return config.group_id
 
-    # Final fallback
-    logger.info("Using default group_id (fallback)")
+    # Priority 4: Final fallback
+    logger.debug("Using default group_id (no connection/config override)")
     return "default"
 
 
