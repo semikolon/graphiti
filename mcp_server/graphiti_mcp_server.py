@@ -684,6 +684,21 @@ def get_effective_group_id(ctx: Context | None) -> str:
 
                 if request and hasattr(request, 'query_params'):
                     logger.info(f"DEBUG - query_params: {request.query_params}")
+
+                # Check headers for X-Graphiti-Group-Id
+                if request and hasattr(request, 'headers'):
+                    logger.info(f"DEBUG - headers type: {type(request.headers)}")
+                    logger.info(f"DEBUG - headers dict: {dict(request.headers)}")
+
+                    # Try to get X-Graphiti-Group-Id header
+                    header_group_id = request.headers.get('X-Graphiti-Group-Id') or request.headers.get('x-graphiti-group-id')
+                    if header_group_id and header_group_id.strip():
+                        logger.info(f"Using header-based group_id: {header_group_id}")
+                        return header_group_id
+                    else:
+                        logger.info("DEBUG - No X-Graphiti-Group-Id header found")
+
+                if request and hasattr(request, 'query_params'):
                     connection_group_id = request.query_params.get('group_id')
                     if connection_group_id and connection_group_id.strip():
                         logger.info(f"Using connection-specific group_id: {connection_group_id}")
