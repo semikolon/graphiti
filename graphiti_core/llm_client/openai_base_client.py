@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = 'gpt-5-mini'
 DEFAULT_SMALL_MODEL = 'gpt-5-nano'
 DEFAULT_REASONING = 'minimal'
-DEFAULT_VERBOSITY = 'low'
+DEFAULT_VERBOSITY = 'medium'  # Changed from 'low' - gpt-5.1-codex-mini only supports 'medium'
 
 
 class BaseOpenAIClient(LLMClient):

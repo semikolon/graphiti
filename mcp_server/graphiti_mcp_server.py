@@ -362,7 +362,9 @@ class GraphitiLLMConfig(BaseModel):
         # Set temperature
         llm_client_config.temperature = self.temperature
 
-        return OpenAIClient(config=llm_client_config)
+        # Use medium reasoning effort for entity extraction (3-4k thinking tokens typical)
+        # gpt-5.1-codex-mini supports: none, low, medium, high (NOT minimal)
+        return OpenAIClient(config=llm_client_config, reasoning='medium')
 
 
 class GraphitiEmbedderConfig(BaseModel):
