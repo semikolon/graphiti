@@ -86,8 +86,10 @@ def fulltext_query(query: str, group_ids: list[str] | None, driver: GraphDriver)
         if len(query.split(' ')) > MAX_QUERY_LENGTH:
             return ''
         return query
+    # FIX (Dec 14, 2025): Escape special characters in group_id to prevent RediSearch syntax errors
+    # Hyphens in group_ids like "brf-auto" were being parsed as negation operators
     group_ids_filter_list = (
-        [driver.fulltext_syntax + f'group_id:"{g}"' for g in group_ids]
+        [driver.fulltext_syntax + f'group_id:"{lucene_sanitize(g)}"' for g in group_ids]
         if group_ids is not None
         else []
     )
