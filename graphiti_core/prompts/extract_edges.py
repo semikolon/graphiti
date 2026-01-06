@@ -115,6 +115,14 @@ You may use information from the PREVIOUS MESSAGES only to disambiguate referenc
 6. Use `REFERENCE_TIME` to resolve vague or relative temporal expressions (e.g., "last week").
 7. Do **not** hallucinate or infer temporal bounds from unrelated events.
 
+# DECISION RELATIONSHIPS
+
+When extracting facts about Decision entities:
+- Use `SUPERSEDES` when one Decision replaces or invalidates another (e.g., "This decision supersedes our previous choice").
+- The newer Decision should be the SOURCE, the older Decision should be the TARGET.
+- Set `valid_at` to when the supersession took effect.
+- Example: Decision:UseElevenLabs --SUPERSEDES--> Decision:UseFishAudio
+
 # DATETIME RULES
 
 - Use ISO 8601 with “Z” suffix (UTC) (e.g., 2025-04-30T00:00:00Z).

@@ -21,6 +21,7 @@ from openai import AsyncAzureOpenAI
 from pydantic import BaseModel, Field
 
 from custom_entities import (
+    Decision,
     Framework,
     Library,
     Pattern,
@@ -29,6 +30,7 @@ from custom_entities import (
     ServiceAPI,
     Topic,
 )
+from notifications import get_recent_errors_list, notify_episode_failure
 from graphiti_core import Graphiti
 from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.edges import EntityEdge
@@ -144,6 +146,7 @@ ENTITY_TYPES: dict[str, BaseModel] = {
     'ServiceAPI': ServiceAPI,  # type: ignore
     'Pattern': Pattern,  # type: ignore
     'Topic': Topic,  # type: ignore
+    'Decision': Decision,  # type: ignore
 }
 
 
@@ -611,10 +614,12 @@ async def initialize_graphiti():
         embedder_client = config.embedder.create_client()
 
         # Create FalkorDB driver
+        # Note: password=None because FalkorDB container's requirepass isn't being applied on restart
+        # Port is configurable via FALKORDB_REDIS_PORT env var (default 6379, use 6380 to avoid Homebrew Redis conflict)
         falkor_driver = FalkorDriver(
             host='localhost',
-            port=6379,
-            password='falkordb',  # FalkorDB password from Docker container
+            port=int(os.environ.get('FALKORDB_REDIS_PORT', '6379')),
+            password=None,
         )
 
         # Initialize Graphiti client with FalkorDB driver
@@ -874,6 +879,8 @@ async def add_memory(
                 logger.error(
                     f"Error processing episode '{name}' for group_id {group_id_str}: {error_msg}"
                 )
+                # Send macOS notification for failed episode
+                notify_episode_failure(name, group_id_str, error_msg)
 
         # Initialize queue for this group_id if it doesn't exist
         if group_id_str not in episode_queues:
@@ -982,6 +989,8 @@ async def add_global_memory(
                 logger.error(
                     f"Error processing global episode '{name}' for group_id {group_id_str}: {error_msg}"
                 )
+                # Send macOS notification for failed episode
+                notify_episode_failure(name, group_id_str, error_msg)
 
         # Initialize queue for this group_id if it doesn't exist
         if group_id_str not in episode_queues:
@@ -1585,6 +1594,26 @@ async def clear_graph() -> SuccessResponse | ErrorResponse:
         error_msg = str(e)
         logger.error(f'Error clearing graph: {error_msg}')
         return ErrorResponse(error=f'Error clearing graph: {error_msg}')
+
+
+@mcp.tool()
+async def get_recent_errors(
+    since_minutes: int = 60,
+    error_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """Get recent Graphiti processing errors.
+
+    Useful for reviewing errors that occurred while you were away or in Focus mode.
+    Returns errors from the in-memory accumulator (last 100 errors, ring buffer).
+
+    Args:
+        since_minutes: Return errors from last N minutes (default: 60)
+        error_type: Optional filter by type: "episode_processing", "search", "connection"
+
+    Returns:
+        List of error records with timestamp, episode_name, group_id, error_message, error_type
+    """
+    return get_recent_errors_list(since_minutes=since_minutes, error_type=error_type)
 
 
 @mcp.resource('http://graphiti/status')

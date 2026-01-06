@@ -66,3 +66,19 @@ class Topic(BaseModel):
     Examples: 'Performance', 'Security', 'Architecture'
     """
     slug: str = Field(..., description="kebab-case slug, e.g., 'performance', 'security', 'architecture'")
+
+
+class Decision(BaseModel):
+    """An architectural or strategic decision made during development.
+
+    Entity name should be a clear, descriptive decision title.
+    Examples: 'Use PostgreSQL for primary database', 'Implement JWT authentication',
+              'Deploy with Kubernetes', 'Use ElevenLabs for TTS'
+
+    Decisions have lifecycle: Proposed → Implemented → potentially Superseded.
+    When one decision supersedes another, create a SUPERSEDES edge between them.
+    """
+    decision_id: str = Field(..., description="Canonical decision ID in format d_YYYY_MM_DD_XXXXXXXX (8 hex chars)")
+    category: str = Field(..., description="Decision domain: architecture, security, performance, integration, tooling, process")
+    status: str = Field(default="Implemented", description="Lifecycle status: Proposed, Implemented, Superseded")
+    rationale: str | None = Field(None, description="Brief rationale for the decision (under 500 chars)")
