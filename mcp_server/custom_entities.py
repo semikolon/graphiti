@@ -69,7 +69,7 @@ class Topic(BaseModel):
 
 
 class Decision(BaseModel):
-    """An architectural or strategic decision made during development.
+    """An architectural or technical decision made during development.
 
     Entity name should be a clear, descriptive decision title.
     Examples: 'Use PostgreSQL for primary database', 'Implement JWT authentication',
@@ -77,8 +77,82 @@ class Decision(BaseModel):
 
     Decisions have lifecycle: Proposed → Implemented → potentially Superseded.
     When one decision supersedes another, create a SUPERSEDES edge between them.
+
+    For non-technical decisions, use BusinessRule, PolicyDecision, WorkflowChoice, or ExternalConstraint.
     """
     decision_id: str = Field(..., description="Canonical decision ID in format d_YYYY_MM_DD_XXXXXXXX (8 hex chars)")
     category: str = Field(..., description="Decision domain: architecture, security, performance, integration, tooling, process")
     status: str = Field(default="Implemented", description="Lifecycle status: Proposed, Implemented, Superseded")
     rationale: str | None = Field(None, description="Brief rationale for the decision (under 500 chars)")
+
+
+class BusinessRule(BaseModel):
+    """A domain-specific business rule, formula, or threshold we chose to implement.
+
+    Entity name should describe the rule clearly.
+    Examples: 'Rent calculated by days stayed', 'Confidence weight 95/90/70 hierarchy',
+              'Remainder distributed to largest fractional parts', 'Critical severity triggers Phase 3'
+
+    BusinessRules are internal choices with rationale - we decided this formula/threshold.
+    They may be superseded when business logic evolves.
+    """
+    decision_id: str = Field(..., description="Canonical decision ID in format d_YYYY_MM_DD_XXXXXXXX (8 hex chars)")
+    category: str = Field(..., description="Rule domain: pricing, calculation, validation, threshold, workflow-logic")
+    status: str = Field(default="Implemented", description="Lifecycle status: Proposed, Implemented, Superseded")
+    conditions: str | None = Field(None, description="When this rule applies (under 300 chars)")
+    rationale: str | None = Field(None, description="Why this formula/threshold/logic (under 500 chars)")
+    exceptions: str | None = Field(None, description="When the rule doesn't apply (under 300 chars)")
+
+
+class PolicyDecision(BaseModel):
+    """An organizational or strategic decision affecting how we operate.
+
+    Entity name should describe the policy clearly.
+    Examples: 'Prefer long-term tenants', 'Cost optimization threshold $1000/year',
+              'Cyan-only success states', 'Handbook public deployment deferred'
+
+    PolicyDecisions include brand decisions, strategic choices, and governance rules.
+    They may have review dates and can be superseded.
+    """
+    decision_id: str = Field(..., description="Canonical decision ID in format d_YYYY_MM_DD_XXXXXXXX (8 hex chars)")
+    category: str = Field(..., description="Policy domain: governance, brand, strategy, recruitment, cost, feature-roadmap")
+    status: str = Field(default="Implemented", description="Lifecycle status: Proposed, Implemented, Superseded")
+    deciders: str | None = Field(None, description="Who made this decision (role/person/team)")
+    rationale: str | None = Field(None, description="Why we chose this (under 500 chars)")
+    review_date: str | None = Field(None, description="When to revisit this policy (ISO date or 'quarterly'/'annually')")
+
+
+class WorkflowChoice(BaseModel):
+    """A process architecture or workflow design decision.
+
+    Entity name should describe the workflow/process.
+    Examples: 'Two-phase QC gate', 'Parallel Phase 1 and 2 execution',
+              'Single active task model', 'Git-backed handbook proposals'
+
+    WorkflowChoices define how we do things - ceremonies, processes, procedures.
+    They may be superseded as processes evolve.
+    """
+    decision_id: str = Field(..., description="Canonical decision ID in format d_YYYY_MM_DD_XXXXXXXX (8 hex chars)")
+    category: str = Field(..., description="Workflow domain: development, review, deployment, testing, ceremony, operations")
+    status: str = Field(default="Implemented", description="Lifecycle status: Proposed, Implemented, Superseded")
+    rationale: str | None = Field(None, description="Why this workflow/process (under 500 chars)")
+    procedure: str | None = Field(None, description="Brief description of how it works (under 500 chars)")
+
+
+class ExternalConstraint(BaseModel):
+    """An external regulation, legal requirement, or domain fact we must comply with.
+
+    Entity name should describe the constraint clearly.
+    Examples: 'Bolagsverket January 2025 mandate', 'BRF org number 70-79 prefix',
+              'GDPR data retention limits', 'Swedish accounting depreciation rules'
+
+    ExternalConstraints are NOT our decisions - they're imposed by external authorities.
+    No decision_id (we didn't decide this). No rationale (it's mandated).
+    Track source, compliance status, and review dates.
+    """
+    source: str = Field(..., description="Authoritative source: law name, regulatory body, professional standard")
+    constraint_type: str = Field(..., description="Type: regulation, legal, compliance, domain-fact, professional-standard")
+    scope: str | None = Field(None, description="What this affects in our system (under 300 chars)")
+    compliance_status: str = Field(default="Compliant", description="Status: Compliant, In Progress, Non-Compliant, N/A")
+    effective_date: str | None = Field(None, description="When this took/takes effect (ISO date)")
+    review_date: str | None = Field(None, description="When to check for updates (ISO date or 'annually')")

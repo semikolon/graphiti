@@ -115,13 +115,34 @@ You may use information from the PREVIOUS MESSAGES only to disambiguate referenc
 6. Use `REFERENCE_TIME` to resolve vague or relative temporal expressions (e.g., "last week").
 7. Do **not** hallucinate or infer temporal bounds from unrelated events.
 
-# DECISION RELATIONSHIPS
+# DECISION-FAMILY RELATIONSHIPS
 
-When extracting facts about Decision entities:
-- Use `SUPERSEDES` when one Decision replaces or invalidates another (e.g., "This decision supersedes our previous choice").
-- The newer Decision should be the SOURCE, the older Decision should be the TARGET.
+Decision-family entities include: Decision (technical/architectural), BusinessRule (domain formulas/thresholds),
+PolicyDecision (organizational/strategic/brand), WorkflowChoice (process/ceremony), and ExternalConstraint (regulations/laws).
+
+When extracting facts about these entities:
+
+**SUPERSEDES relationship** (for internal choices that evolve):
+- Use when one decision/rule/policy replaces or invalidates another of the SAME TYPE.
+- The newer entity should be the SOURCE, the older entity should be the TARGET.
 - Set `valid_at` to when the supersession took effect.
-- Example: Decision:UseElevenLabs --SUPERSEDES--> Decision:UseFishAudio
+- Examples:
+  - Decision:UseElevenLabs --SUPERSEDES--> Decision:UseFishAudio
+  - BusinessRule:RentByDaysStayed --SUPERSEDES--> BusinessRule:RentByMonthsStayed
+  - PolicyDecision:PreferLongTermTenants --SUPERSEDES--> PolicyDecision:AcceptAllTenants
+
+**COMPLIES_WITH relationship** (for constraint compliance):
+- Use when a Decision/BusinessRule/WorkflowChoice explicitly addresses an ExternalConstraint.
+- The internal decision should be the SOURCE, the constraint should be the TARGET.
+- Example: Decision:UseGDPRCompliantStorage --COMPLIES_WITH--> ExternalConstraint:GDPRDataRetention
+
+**IMPLEMENTS relationship** (for policy-to-rule cascade):
+- Use when a BusinessRule or WorkflowChoice implements a PolicyDecision.
+- Example: BusinessRule:95PercentConfidenceWeight --IMPLEMENTS--> PolicyDecision:QualityOverSpeed
+
+**REQUIRES relationship** (for dependencies between decisions):
+- Use when one decision depends on or requires another.
+- Example: Decision:UsePostgreSQL --REQUIRES--> Decision:DeployOnAWS
 
 # DATETIME RULES
 

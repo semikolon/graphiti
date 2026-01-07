@@ -21,14 +21,18 @@ from openai import AsyncAzureOpenAI
 from pydantic import BaseModel, Field
 
 from custom_entities import (
+    BusinessRule,
     Decision,
+    ExternalConstraint,
     Framework,
     Library,
     Pattern,
+    PolicyDecision,
     ProgrammingLanguage,
     Project,
     ServiceAPI,
     Topic,
+    WorkflowChoice,
 )
 from notifications import get_recent_errors_list, notify_episode_failure
 from graphiti_core import Graphiti
@@ -146,7 +150,12 @@ ENTITY_TYPES: dict[str, BaseModel] = {
     'ServiceAPI': ServiceAPI,  # type: ignore
     'Pattern': Pattern,  # type: ignore
     'Topic': Topic,  # type: ignore
-    'Decision': Decision,  # type: ignore
+    # Decision types (all have decision_id for triple-storage, except ExternalConstraint)
+    'Decision': Decision,  # type: ignore  # Technical/architectural decisions
+    'BusinessRule': BusinessRule,  # type: ignore  # Domain-specific rules/formulas/thresholds
+    'PolicyDecision': PolicyDecision,  # type: ignore  # Organizational/strategic/brand decisions
+    'WorkflowChoice': WorkflowChoice,  # type: ignore  # Process/ceremony/workflow decisions
+    'ExternalConstraint': ExternalConstraint,  # type: ignore  # Regulations/laws (not our decision)
 }
 
 
