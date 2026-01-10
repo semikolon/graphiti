@@ -237,7 +237,7 @@ uv run graphiti_mcp_server.py
 With options:
 
 ```bash
-uv run graphiti_mcp_server.py --model gpt-4.1-mini --transport sse
+uv run graphiti_mcp_server.py --model gpt-5-mini --transport sse
 ```
 
 Available arguments:
@@ -276,7 +276,7 @@ Before running the Docker Compose setup, you need to configure the environment v
      ```
      # Required for LLM operations
      OPENAI_API_KEY=your_openai_api_key_here
-     MODEL_NAME=gpt-4.1-mini
+     MODEL_NAME=gpt-5-mini
      # Optional: OPENAI_BASE_URL only needed for non-standard OpenAI endpoints
      # OPENAI_BASE_URL=https://api.openai.com/v1
      ```
@@ -285,7 +285,7 @@ Before running the Docker Compose setup, you need to configure the environment v
 2. **Using environment variables directly**:
    - You can also set the environment variables when running the Docker Compose command:
      ```bash
-     OPENAI_API_KEY=your_key MODEL_NAME=gpt-4.1-mini docker compose up
+     OPENAI_API_KEY=your_key MODEL_NAME=gpt-5-mini docker compose up
      ```
 
 #### Neo4j Configuration
@@ -354,7 +354,7 @@ To use the Graphiti MCP server with an MCP-compatible client, configure it to co
         "NEO4J_USER": "neo4j",
         "NEO4J_PASSWORD": "password",
         "OPENAI_API_KEY": "sk-XXXXXXXX",
-        "MODEL_NAME": "gpt-4.1-mini"
+        "MODEL_NAME": "gpt-5-mini"
       }
     }
   }
