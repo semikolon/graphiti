@@ -56,8 +56,8 @@ from graphiti_core.utils.maintenance.graph_data_operations import clear_data
 load_dotenv()
 
 
-DEFAULT_LLM_MODEL = 'gpt-4.1-mini'
-SMALL_LLM_MODEL = 'gpt-4.1-nano'
+DEFAULT_LLM_MODEL = 'gpt-5-mini'
+SMALL_LLM_MODEL = 'gpt-5-nano'
 DEFAULT_EMBEDDER_MODEL = 'text-embedding-3-small'
 
 # Semaphore limit for concurrent Graphiti operations.
@@ -374,9 +374,9 @@ class GraphitiLLMConfig(BaseModel):
         # Set temperature
         llm_client_config.temperature = self.temperature
 
-        # Use medium reasoning effort for entity extraction (3-4k thinking tokens typical)
-        # gpt-5.1-codex-mini supports: none, low, medium, high (NOT minimal)
-        return OpenAIClient(config=llm_client_config, reasoning='medium')
+        # Configure reasoning='high' for full GPT-5/5.2 models.
+        # Note: mini/nano/codex models ignore this - openai_client.py skips unsupported params.
+        return OpenAIClient(config=llm_client_config, reasoning='high')
 
 
 class GraphitiEmbedderConfig(BaseModel):
@@ -623,12 +623,12 @@ async def initialize_graphiti():
         embedder_client = config.embedder.create_client()
 
         # Create FalkorDB driver
-        # Note: password=None because FalkorDB container's requirepass isn't being applied on restart
         # Port is configurable via FALKORDB_REDIS_PORT env var (default 6379, use 6380 to avoid Homebrew Redis conflict)
+        # Password via FALKORDB_PASSWORD (matches --requirepass arg in docker run)
         falkor_driver = FalkorDriver(
             host='localhost',
             port=int(os.environ.get('FALKORDB_REDIS_PORT', '6379')),
-            password=None,
+            password=os.environ.get('FALKORDB_PASSWORD'),
         )
 
         # Initialize Graphiti client with FalkorDB driver

@@ -31,6 +31,11 @@ class OpenAIClient(BaseOpenAIClient):
     This class extends the BaseOpenAIClient and provides OpenAI-specific implementation
     for creating completions.
 
+    Model Parameter Support (Jan 2026):
+        Only full GPT-5/5.2 models support `temperature` and `reasoning.effort`.
+        Mini, nano, and codex model variants do NOT support these parameters.
+        The client automatically skips unsupported parameters based on model name.
+
     Attributes:
         client (AsyncOpenAI): The OpenAI client used to interact with the API.
     """
@@ -73,15 +78,34 @@ class OpenAIClient(BaseOpenAIClient):
         verbosity: str | None = None,
     ):
         """Create a structured completion using OpenAI's beta parse API."""
-        response = await self.client.responses.parse(
-            model=model,
-            input=messages,  # type: ignore
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            text_format=response_model,  # type: ignore
-            reasoning={'effort': reasoning} if reasoning is not None else None,  # type: ignore
-            text={'verbosity': verbosity} if verbosity is not None else None,  # type: ignore
+        # Build kwargs - codex models don't support temperature parameter
+        kwargs: dict[str, typing.Any] = {
+            'model': model,
+            'input': messages,
+            'max_output_tokens': max_tokens,
+            'text_format': response_model,
+        }
+
+        # Only full GPT-5/5.2 models support temperature and reasoning.effort
+        # Excluded: ALL mini models, nano models, codex models
+        model_lower = model.lower()
+        supports_reasoning = (
+            'gpt-5' in model_lower
+            and 'codex' not in model_lower
+            and 'nano' not in model_lower
+            and 'mini' not in model_lower
         )
+
+        if temperature is not None and supports_reasoning:
+            kwargs['temperature'] = temperature
+
+        if reasoning is not None and supports_reasoning:
+            kwargs['reasoning'] = {'effort': reasoning}
+
+        if verbosity is not None:
+            kwargs['text'] = {'verbosity': verbosity}
+
+        response = await self.client.responses.parse(**kwargs)  # type: ignore
 
         return response
 
@@ -96,10 +120,16 @@ class OpenAIClient(BaseOpenAIClient):
         verbosity: str | None = None,
     ):
         """Create a regular completion with JSON format."""
-        return await self.client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format={'type': 'json_object'},
-        )
+        # Build kwargs - codex models don't support temperature parameter
+        kwargs: dict[str, typing.Any] = {
+            'model': model,
+            'messages': messages,
+            'max_tokens': max_tokens,
+            'response_format': {'type': 'json_object'},
+        }
+
+        # Only include temperature for non-codex models
+        if temperature is not None and 'codex' not in model.lower():
+            kwargs['temperature'] = temperature
+
+        return await self.client.chat.completions.create(**kwargs)
