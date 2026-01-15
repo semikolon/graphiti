@@ -781,6 +781,7 @@ async def add_memory(
     source: str = 'text',
     source_description: str = '',
     uuid: str | None = None,
+    valid_at: str | None = None,  # Hidden param: ISO datetime string for historical entries
 ) -> SuccessResponse | ErrorResponse:
     """Add episode to CURRENT PROJECT memory graph.
 
@@ -863,6 +864,20 @@ async def add_memory(
         # Use cast to help the type checker understand that graphiti_client is not None
         client = cast(Graphiti, graphiti_client)
 
+        # Compute effective reference_time: use valid_at if provided, otherwise now
+        if valid_at:
+            try:
+                # Parse ISO format string to datetime
+                effective_reference_time = datetime.fromisoformat(valid_at.replace('Z', '+00:00'))
+                if effective_reference_time.tzinfo is None:
+                    effective_reference_time = effective_reference_time.replace(tzinfo=timezone.utc)
+                logger.info(f"Using custom valid_at for episode '{name}': {effective_reference_time.isoformat()}")
+            except ValueError as e:
+                logger.warning(f"Invalid valid_at format '{valid_at}', using current time: {e}")
+                effective_reference_time = datetime.now(timezone.utc)
+        else:
+            effective_reference_time = datetime.now(timezone.utc)
+
         # Define the episode processing function
         async def process_episode():
             try:
@@ -877,7 +892,7 @@ async def add_memory(
                     source_description=source_description,
                     group_id=group_id_str,  # Using the string version of group_id
                     uuid=uuid,
-                    reference_time=datetime.now(timezone.utc),
+                    reference_time=effective_reference_time,
                     entity_types=entity_types,
                 )
                 logger.info(f"Episode '{name}' added successfully")
@@ -920,6 +935,7 @@ async def add_global_memory(
     source: str = 'text',
     source_description: str = '',
     uuid: str | None = None,
+    valid_at: str | None = None,  # Hidden param: ISO datetime string for historical entries
 ) -> SuccessResponse | ErrorResponse:
     """Add episode to GLOBAL memory graph (shared across all projects).
 
@@ -975,6 +991,20 @@ async def add_global_memory(
         # Use cast to help the type checker understand that graphiti_client is not None
         client = cast(Graphiti, graphiti_client)
 
+        # Compute effective reference_time: use valid_at if provided, otherwise now
+        if valid_at:
+            try:
+                # Parse ISO format string to datetime
+                effective_reference_time = datetime.fromisoformat(valid_at.replace('Z', '+00:00'))
+                if effective_reference_time.tzinfo is None:
+                    effective_reference_time = effective_reference_time.replace(tzinfo=timezone.utc)
+                logger.info(f"Using custom valid_at for global episode '{name}': {effective_reference_time.isoformat()}")
+            except ValueError as e:
+                logger.warning(f"Invalid valid_at format '{valid_at}', using current time: {e}")
+                effective_reference_time = datetime.now(timezone.utc)
+        else:
+            effective_reference_time = datetime.now(timezone.utc)
+
         # Define the episode processing function
         async def process_episode():
             try:
@@ -989,7 +1019,7 @@ async def add_global_memory(
                     source_description=source_description,
                     group_id=group_id_str,
                     uuid=uuid,
-                    reference_time=datetime.now(timezone.utc),
+                    reference_time=effective_reference_time,
                     entity_types=entity_types,
                 )
                 logger.info(f"Global episode '{name}' added successfully")
