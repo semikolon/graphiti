@@ -53,6 +53,11 @@ from graphiti_core.search.search_config_recipes import (
 from graphiti_core.search.search_filters import SearchFilters
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data
 
+# FalkorDBLite support - embedded FalkorDB without Docker
+USE_FALKORDBLITE = os.environ.get('USE_FALKORDBLITE', '').lower() in ('1', 'true', 'yes')
+if USE_FALKORDBLITE:
+    from redislite import AsyncFalkorDB as EmbeddedAsyncFalkorDB
+
 load_dotenv()
 
 
@@ -623,13 +628,28 @@ async def initialize_graphiti():
         embedder_client = config.embedder.create_client()
 
         # Create FalkorDB driver
-        # Port is configurable via FALKORDB_REDIS_PORT env var (default 6379, use 6380 to avoid Homebrew Redis conflict)
-        # Password via FALKORDB_PASSWORD (matches --requirepass arg in docker run)
-        falkor_driver = FalkorDriver(
-            host='localhost',
-            port=int(os.environ.get('FALKORDB_REDIS_PORT', '6379')),
-            password=os.environ.get('FALKORDB_PASSWORD'),
-        )
+        if USE_FALKORDBLITE:
+            # FalkorDBLite: embedded FalkorDB without Docker
+            # Data stored at ~/.graphiti/falkordblite.rdb by default
+            falkordblite_path = os.environ.get(
+                'FALKORDBLITE_PATH',
+                os.path.expanduser('~/.graphiti/falkordblite.rdb')
+            )
+            # Ensure parent directory exists
+            os.makedirs(os.path.dirname(falkordblite_path), exist_ok=True)
+            logger.info(f'Using FalkorDBLite (embedded) at: {falkordblite_path}')
+            embedded_db = EmbeddedAsyncFalkorDB(dbfilename=falkordblite_path)
+            falkor_driver = FalkorDriver(falkor_db=embedded_db)
+        else:
+            # Docker FalkorDB: connect to external server
+            # Port is configurable via FALKORDB_REDIS_PORT env var (default 6379, use 6380 to avoid Homebrew Redis conflict)
+            # Password via FALKORDB_PASSWORD (matches --requirepass arg in docker run)
+            logger.info('Using Docker FalkorDB')
+            falkor_driver = FalkorDriver(
+                host='localhost',
+                port=int(os.environ.get('FALKORDB_REDIS_PORT', '6379')),
+                password=os.environ.get('FALKORDB_PASSWORD'),
+            )
 
         # Initialize Graphiti client with FalkorDB driver
         graphiti_client = Graphiti(
