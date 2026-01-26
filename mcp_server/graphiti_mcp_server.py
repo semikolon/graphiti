@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -1729,6 +1730,95 @@ async def get_recent_errors(
         List of error records with timestamp, episode_name, group_id, error_message, error_type
     """
     return get_recent_errors_list(since_minutes=since_minutes, error_type=error_type)
+
+
+@mcp.tool()
+async def raw_cypher_query(
+    query: str,
+    params: dict[str, Any] | None = None,
+    max_results: int = 50,
+) -> list[dict[str, Any]] | ErrorResponse:
+    """Execute a raw Cypher query against the graph database.
+
+    Use for complex graph traversals that can't be expressed via search_nodes/search_facts.
+    This is READ-ONLY - write operations (CREATE, DELETE, SET, MERGE) are blocked.
+
+    Args:
+        query: Valid Cypher query string. Must be read-only.
+        params: Optional query parameters for parameterized queries (prevents injection).
+        max_results: Maximum results to return (default 50, max 500).
+
+    Returns:
+        List of result dictionaries matching the RETURN clause.
+
+    Example:
+        raw_cypher_query(
+            query="MATCH (d:Decision)-[:APPLIES_PATTERN]->(p:Pattern) "
+                  "WHERE p.slug STARTS WITH $prefix "
+                  "RETURN d.title, p.name, d.created_at "
+                  "ORDER BY d.created_at DESC LIMIT $limit",
+            params={"prefix": "auth__", "limit": 10}
+        )
+
+    Safety:
+        - Write operations are blocked (CREATE, DELETE, SET, MERGE, REMOVE, DROP)
+        - Results are capped at max_results to prevent memory issues
+        - Parameterized queries are encouraged to prevent injection
+    """
+    global graphiti_client
+
+    if graphiti_client is None:
+        return ErrorResponse(error='Graphiti client not initialized')
+
+    # Block write operations - use regex word boundaries to avoid false positives
+    # e.g., "created_at" should NOT match "CREATE"
+    query_upper = query.upper()
+    write_keywords = [
+        (r'\bCREATE\b', 'CREATE'),
+        (r'\bDELETE\b', 'DELETE'),
+        (r'\bSET\b', 'SET'),
+        (r'\bMERGE\b', 'MERGE'),
+        (r'\bREMOVE\b', 'REMOVE'),
+        (r'\bDROP\b', 'DROP'),
+        (r'\bDETACH\b', 'DETACH'),
+    ]
+    for pattern, keyword in write_keywords:
+        if re.search(pattern, query_upper):
+            return ErrorResponse(
+                error=f'Write operations are not allowed. Found: {keyword}'
+            )
+
+    # Cap max_results
+    max_results = min(max_results, 500)
+
+    # Ensure LIMIT is present or add it
+    if 'LIMIT' not in query_upper:
+        query = f'{query} LIMIT {max_results}'
+
+    try:
+        client = cast(Graphiti, graphiti_client)
+
+        # Execute the query
+        if params is None:
+            params = {}
+
+        result = await client.driver.execute_query(query, **params)
+
+        if result is None:
+            return []
+
+        records, header, _ = result
+
+        # Truncate to max_results
+        if len(records) > max_results:
+            records = records[:max_results]
+
+        return records
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f'Error executing Cypher query: {error_msg}\nQuery: {query}')
+        return ErrorResponse(error=f'Cypher query error: {error_msg}')
 
 
 @mcp.resource('http://graphiti/status')
