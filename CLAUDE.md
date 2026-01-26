@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+**Fork Branch Note**: This fork uses `feature/explicit-scoping` as de facto main (fork's `main` diverged 146 commits from upstream getzep/graphiti due to major MCP refactor). See `~/dotfiles/TODO.md` "Deferred: Graphiti Upstream Sync" for details.
+
 Graphiti is a Python framework for building temporally-aware knowledge graphs designed for AI agents. It enables real-time incremental updates to knowledge graphs without batch recomputation, making it suitable for dynamic environments.
 
 Key features:
