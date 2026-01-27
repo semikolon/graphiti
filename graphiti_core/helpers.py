@@ -60,8 +60,15 @@ def get_default_group_id(provider: GraphProvider) -> str:
 
 
 def lucene_sanitize(query: str) -> str:
-    # Escape special characters from a query before passing into Lucene
-    # + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+    """
+    Escape special characters from a query before passing into RediSearch/Lucene.
+
+    Special characters that need escaping: + - && || ! ( ) { } [ ] ^ " ~ * ? : \\ /
+
+    Boolean operators (OR, AND, NOT) are handled by filtering them out as standalone
+    words rather than mangling all text containing those letters.
+    """
+    # Step 1: Escape special characters
     escape_map = str.maketrans(
         {
             '+': r'\+',
@@ -83,17 +90,18 @@ def lucene_sanitize(query: str) -> str:
             ':': r'\:',
             '\\': r'\\',
             '/': r'\/',
-            'O': r'\O',
-            'R': r'\R',
-            'N': r'\N',
-            'T': r'\T',
-            'A': r'\A',
-            'D': r'\D',
         }
     )
 
     sanitized = query.translate(escape_map)
-    return sanitized
+
+    # Step 2: Filter out standalone boolean operators (case-insensitive)
+    # RediSearch interprets OR, AND, NOT as boolean operators even in lowercase
+    boolean_operators = {'or', 'and', 'not'}
+    words = sanitized.split()
+    filtered_words = [w for w in words if w.lower() not in boolean_operators]
+
+    return ' '.join(filtered_words)
 
 
 def normalize_l2(embedding: list[float]) -> NDArray:
