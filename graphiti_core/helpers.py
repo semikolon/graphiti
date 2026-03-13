@@ -64,11 +64,12 @@ def lucene_sanitize(query: str) -> str:
     Escape special characters from a query before passing into RediSearch/Lucene.
 
     Special characters that need escaping: + - && || ! ( ) { } [ ] ^ " ~ * ? : \\ /
+    RediSearch-specific characters: @ (field prefix), . (separator), # $ % '
 
     Boolean operators (OR, AND, NOT) are handled by filtering them out as standalone
     words rather than mangling all text containing those letters.
     """
-    # Step 1: Escape special characters
+    # Step 1: Escape special characters (Lucene + RediSearch-specific)
     escape_map = str.maketrans(
         {
             '+': r'\+',
@@ -90,6 +91,13 @@ def lucene_sanitize(query: str) -> str:
             ':': r'\:',
             '\\': r'\\',
             '/': r'\/',
+            # RediSearch-specific: not standard Lucene but cause syntax errors in FalkorDB
+            '@': r'\@',
+            '.': r'\.',
+            '#': r'\#',
+            '$': r'\$',
+            '%': r'\%',
+            "'": r"\'",
         }
     )
 

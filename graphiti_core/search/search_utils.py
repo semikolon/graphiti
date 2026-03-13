@@ -100,6 +100,10 @@ def fulltext_query(query: str, group_ids: list[str] | None, driver: GraphDriver)
     group_ids_filter += ' AND ' if group_ids_filter else ''
 
     lucene_query = lucene_sanitize(query)
+    # Guard against empty queries (entity names that are all boolean operators, whitespace, etc.)
+    # Empty parens in RediSearch (@group_id:"x" AND ()) cause syntax errors
+    if not lucene_query or not lucene_query.strip():
+        return ''
     # If the lucene query is too long return no query
     if len(lucene_query.split(' ')) + len(group_ids or '') >= MAX_QUERY_LENGTH:
         return ''
