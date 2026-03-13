@@ -156,3 +156,103 @@ class ExternalConstraint(BaseModel):
     compliance_status: str = Field(default="Compliant", description="Status: Compliant, In Progress, Non-Compliant, N/A")
     effective_date: str | None = Field(None, description="When this took/takes effect (ISO date)")
     review_date: str | None = Field(None, description="When to check for updates (ISO date or 'annually')")
+
+
+# --- Task management entities (Fyr personal assistant) ---
+
+
+class Task(BaseModel):
+    """An actionable item with status lifecycle and dependency tracking.
+
+    Tasks are the atomic unit of work. They can represent anything from
+    'pay the electricity bill' to 'plan next week's meals' to 'set up
+    the new router'. Each task has a status, optional priority, and
+    optional energy/time estimates.
+
+    Entity name should be a clear, actionable task title.
+    Examples: 'Pay rent March 2026', 'Plan weekly meals', 'Set up new router'
+
+    Dependencies use DEPENDS_ON edges (one canonical direction only):
+    "Deploy food system" DEPENDS_ON "Set up router" means router must finish first.
+    """
+    status: str = Field(
+        default="open",
+        description="Lifecycle status: open, in_progress, blocked, done, deferred"
+    )
+    priority: int | None = Field(
+        None,
+        description="1 (highest) to 5 (lowest), or null (unset — heartbeat derives from deps/deadlines)"
+    )
+    energy_level: str | None = Field(
+        None,
+        description="Required energy: low, medium, high — matches user's current energy for 'what can I do now?' queries"
+    )
+    estimated_minutes: int | None = Field(
+        None,
+        description="Rough time estimate in minutes — enables 'I have 15 minutes, what fits?' queries"
+    )
+    due_date: str | None = Field(
+        None,
+        description="ISO 8601 date (e.g. '2026-03-25'). For shared deadlines, use a Deadline entity + DUE_BY edge instead"
+    )
+    recurrence: str | None = Field(
+        None,
+        description="Recurrence pattern: none, daily, weekly, monthly, or cron expression"
+    )
+    domain: str | None = Field(
+        None,
+        description="Life domain: food, finance, household, health, work, personal"
+    )
+    context: str | None = Field(
+        None,
+        description="GTD-style context: at_computer, errands, phone_call, or free-form"
+    )
+
+
+class Deadline(BaseModel):
+    """A temporal constraint that may apply to one or more tasks.
+
+    Use for shared deadlines that affect multiple tasks (e.g., 'REKO order
+    deadline' applies to 'decide meals' + 'check inventory' + 'place order').
+    For simple single-task due dates, use Task.due_date instead.
+
+    Entity name should describe the deadline clearly.
+    Examples: 'REKO order deadline March 15', 'Electricity bill due date', 'Tax filing deadline'
+    """
+    date: str = Field(..., description="ISO 8601 date (e.g. '2026-03-25')")
+    hard: bool = Field(
+        default=True,
+        description="True = immovable (bill due date, legal deadline). False = soft/aspirational"
+    )
+    consequence: str | None = Field(
+        None,
+        description="What happens if missed? e.g. 'late fee 50kr', 'inkasso risk', 'miss REKO pickup'"
+    )
+
+
+class Routine(BaseModel):
+    """A recurring pattern of activity — habits, rituals, periodic processes.
+
+    Different from a recurring Task: a Routine is the PATTERN, while Tasks
+    are individual INSTANCES. 'Weekly meal planning' is a Routine that
+    generates Tasks each week.
+
+    Entity name should describe the routine clearly.
+    Examples: 'Weekly meal planning', 'Monthly rent payment', 'Daily exercise'
+    """
+    frequency: str = Field(
+        ...,
+        description="Recurrence frequency: daily, weekly, monthly, or cron expression"
+    )
+    time_of_day: str | None = Field(
+        None,
+        description="Preferred time: morning, afternoon, evening, anytime"
+    )
+    domain: str | None = Field(
+        None,
+        description="Life domain: food, finance, household, health, work, personal"
+    )
+    active: bool = Field(
+        default=True,
+        description="Can be paused without deletion"
+    )

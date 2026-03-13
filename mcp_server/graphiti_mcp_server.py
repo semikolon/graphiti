@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from custom_entities import (
     BusinessRule,
+    Deadline,
     Decision,
     ExternalConstraint,
     Framework,
@@ -31,7 +32,9 @@ from custom_entities import (
     PolicyDecision,
     ProgrammingLanguage,
     Project,
+    Routine,
     ServiceAPI,
+    Task,
     Topic,
     WorkflowChoice,
 )
@@ -162,6 +165,10 @@ ENTITY_TYPES: dict[str, BaseModel] = {
     'PolicyDecision': PolicyDecision,  # type: ignore  # Organizational/strategic/brand decisions
     'WorkflowChoice': WorkflowChoice,  # type: ignore  # Process/ceremony/workflow decisions
     'ExternalConstraint': ExternalConstraint,  # type: ignore  # Regulations/laws (not our decision)
+    # Task management entities (Fyr personal assistant)
+    'Task': Task,  # type: ignore  # Actionable items with status/priority/deps
+    'Deadline': Deadline,  # type: ignore  # Temporal constraints (shared deadlines)
+    'Routine': Routine,  # type: ignore  # Recurring patterns that generate Tasks
 }
 
 
