@@ -639,10 +639,10 @@ async def initialize_graphiti():
         if USE_FALKORDBLITE:
             # FalkorDBLite: embedded FalkorDB without Docker
             # Data stored at ~/.graphiti/falkordblite.rdb by default
-            falkordblite_path = os.environ.get(
+            falkordblite_path = os.path.expanduser(os.environ.get(
                 'FALKORDBLITE_PATH',
-                os.path.expanduser('~/.graphiti/falkordblite.rdb')
-            )
+                '~/.graphiti/falkordblite.rdb'
+            ))
             # Ensure parent directory exists
             os.makedirs(os.path.dirname(falkordblite_path), exist_ok=True)
             logger.info(f'Using FalkorDBLite (embedded) at: {falkordblite_path}')

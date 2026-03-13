@@ -6,6 +6,7 @@ Only active on macOS. Gracefully degrades to no-op on other platforms.
 Error-only notifications to avoid spam - success is expected, errors need attention.
 """
 
+import json
 import logging
 import os
 import platform
@@ -17,6 +18,9 @@ from collections import deque
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Persistent error log (survives process restarts, easy to review later)
+ERROR_LOG_PATH = os.path.expanduser("~/.graphiti/errors.jsonl")
 
 
 # =============================================================================
@@ -92,6 +96,15 @@ def record_error(
         error_type=error_type,
     )
     recent_errors.append(error)
+
+    # Persist to JSONL file (survives process restarts)
+    try:
+        os.makedirs(os.path.dirname(ERROR_LOG_PATH), exist_ok=True)
+        with open(ERROR_LOG_PATH, "a") as f:
+            f.write(json.dumps(error.to_dict()) + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to write error to {ERROR_LOG_PATH}: {e}")
+
     return error
 
 
