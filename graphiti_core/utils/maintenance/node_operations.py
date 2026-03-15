@@ -42,6 +42,42 @@ from graphiti_core.utils.maintenance.edge_operations import filter_existing_dupl
 
 logger = logging.getLogger(__name__)
 
+# Protected field names from EntityNode and EntityEdge core models.
+# LLM-extracted attributes with these names are stripped to prevent
+# silent data corruption (Graphiti #1164). The LLM sees episode text
+# containing words like "attributes", "name", "summary" and may extract
+# them as entity properties — which would overwrite core model fields.
+_PROTECTED_NODE_FIELDS = frozenset(EntityNode.model_fields.keys())
+_PROTECTED_EDGE_FIELDS: frozenset[str] = frozenset()  # populated lazily to avoid circular import
+
+
+def _get_protected_edge_fields() -> frozenset[str]:
+    global _PROTECTED_EDGE_FIELDS
+    if not _PROTECTED_EDGE_FIELDS:
+        from graphiti_core.edges import EntityEdge
+        _PROTECTED_EDGE_FIELDS = frozenset(EntityEdge.model_fields.keys())
+    return _PROTECTED_EDGE_FIELDS
+
+
+def sanitize_extracted_attributes(
+    extracted: dict[str, Any],
+    protected_fields: frozenset[str],
+    context_label: str = '',
+) -> dict[str, Any]:
+    """Strip keys that collide with core model fields.
+
+    Prevents silent data corruption when LLM extracts property names
+    like 'attributes', 'name', 'summary' from episode text (Graphiti #1164).
+    """
+    collisions = set(extracted.keys()) & protected_fields
+    if collisions:
+        logger.warning(
+            f'Stripped protected field names from LLM-extracted attributes '
+            f'({context_label}): {collisions}'
+        )
+        return {k: v for k, v in extracted.items() if k not in protected_fields}
+    return extracted
+
 
 async def extract_nodes_reflexion(
     llm_client: LLMClient,
@@ -381,10 +417,20 @@ async def extract_attributes_from_node(
     )
 
     if entity_type is not None:
-        entity_type(**llm_response)
+        try:
+            entity_type(**llm_response)
+        except Exception as e:
+            logger.warning(
+                f'Custom entity type validation failed for node "{node.name}": {e}. '
+                f'Proceeding with sanitized attributes.'
+            )
 
     node.summary = summary_response.get('summary', '')
-    node_attributes = {key: value for key, value in llm_response.items()}
+    node_attributes = sanitize_extracted_attributes(
+        {key: value for key, value in llm_response.items()},
+        _PROTECTED_NODE_FIELDS,
+        context_label=f'node "{node.name}"',
+    )
 
     node.attributes.update(node_attributes)
 

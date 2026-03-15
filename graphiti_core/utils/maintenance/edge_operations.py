@@ -464,6 +464,17 @@ async def resolve_extracted_edge(
                 model_size=ModelSize.small,
             )
 
+            # Sanitize protected field names from LLM extraction (Graphiti #1164)
+            from graphiti_core.utils.maintenance.node_operations import (
+                _get_protected_edge_fields,
+                sanitize_extracted_attributes,
+            )
+            edge_attributes_response = sanitize_extracted_attributes(
+                edge_attributes_response,
+                _get_protected_edge_fields(),
+                context_label=f'edge "{resolved_edge.name}"',
+            )
+
             resolved_edge.attributes = edge_attributes_response
 
     end = time()
