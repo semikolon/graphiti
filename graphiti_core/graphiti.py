@@ -998,7 +998,12 @@ class Graphiti:
     ) -> SearchResults:
         """DEPRECATED"""
         return await self.search_(
-            query, config, group_ids, center_node_uuid, bfs_origin_node_uuids, search_filter
+            query=query,
+            config=config,
+            group_ids=group_ids,
+            center_node_uuid=center_node_uuid,
+            bfs_origin_node_uuids=bfs_origin_node_uuids,
+            search_filter=search_filter,
         )
 
     @handle_multiple_group_ids
