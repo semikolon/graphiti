@@ -6,11 +6,13 @@ Graphiti MCP Server - Exposes Graphiti functionality through the Model Context P
 import argparse
 import asyncio
 import logging
+import logging.handlers
 import os
 import re
 import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, cast
 
 from typing_extensions import TypedDict
@@ -568,13 +570,28 @@ class MCPConfig(BaseModel):
         return cls(transport=args.transport)
 
 
-# Configure logging
+# Configure logging — stderr (INFO for CC) + file (WARNING+ for troubleshooting)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     stream=sys.stderr,
 )
 logger = logging.getLogger(__name__)
+
+# File logging — errors/warnings only, rotated to prevent disk fill
+_log_dir = Path.home() / '.graphiti' / 'logs'
+_log_dir.mkdir(parents=True, exist_ok=True)
+_file_handler = logging.handlers.RotatingFileHandler(
+    _log_dir / 'mcp-server.log',
+    maxBytes=5 * 1024 * 1024,  # 5 MB
+    backupCount=3,             # 15 MB max total
+    encoding='utf-8',
+)
+_file_handler.setLevel(logging.WARNING)
+_file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s [%(levelname)s] %(name)s — %(message)s'
+))
+logging.getLogger().addHandler(_file_handler)  # root logger, catches all modules
 
 # Create global config instance - will be properly initialized later
 config = GraphitiConfig()
@@ -810,7 +827,9 @@ async def process_episode_queue(group_id: str):
                     "Episode processing timed out after 300s — OpenAI API may be hung"
                 )
             except Exception as e:
-                logger.error(f'Error processing queued episode for group_id {group_id}: {str(e)}')
+                error_msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+                logger.error(f'Error processing queued episode for group_id {group_id}: {error_msg}')
+                record_error("episode_processing", error_msg, group_id=group_id)
             finally:
                 # Mark the task as done regardless of success/failure
                 episode_queues[group_id].task_done()
@@ -962,7 +981,8 @@ async def add_memory(
 
                 logger.info(f"Episode '{name}' processed successfully")
             except Exception as e:
-                error_msg = str(e)
+                # str(e) is empty for some exceptions (e.g. asyncio.TimeoutError)
+                error_msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
                 logger.error(
                     f"Error processing episode '{name}' for group_id {group_id_str}: {error_msg}"
                 )
