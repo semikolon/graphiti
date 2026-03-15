@@ -16,6 +16,7 @@ limitations under the License.
 
 import typing
 
+import httpx
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
@@ -63,7 +64,11 @@ class OpenAIClient(BaseOpenAIClient):
             config = LLMConfig()
 
         if client is None:
-            self.client = AsyncOpenAI(api_key=config.api_key, base_url=config.base_url)
+            self.client = AsyncOpenAI(
+                api_key=config.api_key,
+                base_url=config.base_url,
+                timeout=httpx.Timeout(connect=5.0, read=120.0, write=120.0, pool=60.0),
+            )
         else:
             self.client = client
 

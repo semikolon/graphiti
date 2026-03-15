@@ -38,7 +38,7 @@ from custom_entities import (
     Topic,
     WorkflowChoice,
 )
-from notifications import get_recent_errors_list, notify_episode_failure
+from notifications import get_recent_errors_list, notify_episode_failure, record_error
 from graphiti_core import Graphiti
 from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.edges import EntityEdge
@@ -797,8 +797,18 @@ async def process_episode_queue(group_id: str):
             process_func = await episode_queues[group_id].get()
 
             try:
-                # Process the episode
-                await process_func()
+                # Process the episode with a 5-minute timeout to prevent hung API calls
+                await asyncio.wait_for(process_func(), timeout=300)
+            except asyncio.TimeoutError:
+                logger.error(
+                    f'Episode processing TIMED OUT after 300s for group_id {group_id} '
+                    f'— likely hung OpenAI API call (CLOSE_WAIT). Skipping to next episode.'
+                )
+                record_error("episode_timeout", "Processing timed out after 300s", group_id=group_id)
+                notify_episode_failure(
+                    "TIMEOUT", group_id,
+                    "Episode processing timed out after 300s — OpenAI API may be hung"
+                )
             except Exception as e:
                 logger.error(f'Error processing queued episode for group_id {group_id}: {str(e)}')
             finally:
@@ -806,11 +816,21 @@ async def process_episode_queue(group_id: str):
                 episode_queues[group_id].task_done()
     except asyncio.CancelledError:
         logger.info(f'Episode queue worker for group_id {group_id} was cancelled')
+        record_error("worker_cancelled", "Queue worker was cancelled", group_id=group_id)
     except Exception as e:
         logger.error(f'Unexpected error in queue worker for group_id {group_id}: {str(e)}')
+        record_error("worker_crash", str(e), group_id=group_id)
+        notify_episode_failure("WORKER_CRASH", group_id, f"Queue worker crashed: {str(e)}")
     finally:
+        remaining = episode_queues[group_id].qsize() if group_id in episode_queues else 0
         queue_workers[group_id] = False
-        logger.info(f'Stopped episode queue worker for group_id: {group_id}')
+        logger.info(f'Stopped episode queue worker for group_id: {group_id} ({remaining} episodes remaining in queue)')
+        if remaining > 0:
+            notify_episode_failure(
+                f"{remaining} orphaned episodes",
+                group_id,
+                f"Queue worker stopped with {remaining} unprocessed episodes remaining"
+            )
 
 
 @mcp.tool()
@@ -925,15 +945,18 @@ async def add_memory(
                 # Use all entity types if use_custom_entities is enabled, otherwise use empty dict
                 entity_types = ENTITY_TYPES if config.use_custom_entities else {}
 
-                await client.add_episode(
-                    name=name,
-                    episode_body=episode_body,
-                    source=source_type,
-                    source_description=source_description,
-                    group_id=group_id_str,  # Using the string version of group_id
-                    uuid=uuid,
-                    reference_time=effective_reference_time,
-                    entity_types=entity_types,
+                await asyncio.wait_for(
+                    client.add_episode(
+                        name=name,
+                        episode_body=episode_body,
+                        source=source_type,
+                        source_description=source_description,
+                        group_id=group_id_str,  # Using the string version of group_id
+                        uuid=uuid,
+                        reference_time=effective_reference_time,
+                        entity_types=entity_types,
+                    ),
+                    timeout=240,  # 4 min — inner timeout fires before outer 5 min
                 )
                 logger.info(f"Episode '{name}' added successfully")
 
@@ -1838,6 +1861,31 @@ async def raw_cypher_query(
         error_msg = str(e)
         logger.error(f'Error executing Cypher query: {error_msg}\nQuery: {query}')
         return ErrorResponse(error=f'Cypher query error: {error_msg}')
+
+
+@mcp.tool()
+async def get_queue_status() -> SuccessResponse:
+    """Check episode processing queue health.
+
+    Shows queue depth and worker status for each group_id.
+    Use to diagnose stuck or slow episode processing.
+    """
+    status = {}
+    for group_id, queue in episode_queues.items():
+        status[group_id] = {
+            "queue_depth": queue.qsize(),
+            "worker_alive": queue_workers.get(group_id, False),
+        }
+
+    if not status:
+        return SuccessResponse(message="No episode queues active")
+
+    lines = []
+    for gid, info in status.items():
+        state = "running" if info["worker_alive"] else "STOPPED"
+        lines.append(f"  {gid}: {info['queue_depth']} queued, worker {state}")
+
+    return SuccessResponse(message="Queue status:\n" + "\n".join(lines))
 
 
 @mcp.resource('http://graphiti/status')

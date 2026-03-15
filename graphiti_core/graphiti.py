@@ -460,16 +460,18 @@ class Graphiti:
             validate_group_id(group_id)
 
             # FalkorDB: route to per-project graph via driver.clone()
-            if group_id != self.driver._database:
-                self.driver = self.driver.clone(database=group_id)
-                self.clients = GraphitiClients(
-                    driver=self.driver,
-                    llm_client=self.llm_client,
-                    embedder=self.embedder,
-                    cross_encoder=self.cross_encoder,
-                )
+            # Use LOCAL variables to avoid mutating shared self.driver/self.clients state
+            driver = self.driver
+            if group_id != driver._database:
+                driver = driver.clone(database=group_id)
+            clients = GraphitiClients(
+                driver=driver,
+                llm_client=self.llm_client,
+                embedder=self.embedder,
+                cross_encoder=self.cross_encoder,
+            )
 
-            await build_dynamic_indexes(self.driver, group_id)
+            await build_dynamic_indexes(driver, group_id)
 
             previous_episodes = (
                 await self.retrieve_episodes(
@@ -479,11 +481,11 @@ class Graphiti:
                     source=source,
                 )
                 if previous_episode_uuids is None
-                else await EpisodicNode.get_by_uuids(self.driver, previous_episode_uuids)
+                else await EpisodicNode.get_by_uuids(driver, previous_episode_uuids)
             )
 
             episode = (
-                await EpisodicNode.get_by_uuid(self.driver, uuid)
+                await EpisodicNode.get_by_uuid(driver, uuid)
                 if uuid is not None
                 else EpisodicNode(
                     name=name,
@@ -507,20 +509,20 @@ class Graphiti:
             # Extract entities as nodes
 
             extracted_nodes = await extract_nodes(
-                self.clients, episode, previous_episodes, entity_types, excluded_entity_types
+                clients, episode, previous_episodes, entity_types, excluded_entity_types
             )
 
             # Extract edges and resolve nodes
             (nodes, uuid_map, node_duplicates), extracted_edges = await semaphore_gather(
                 resolve_extracted_nodes(
-                    self.clients,
+                    clients,
                     extracted_nodes,
                     episode,
                     previous_episodes,
                     entity_types,
                 ),
                 extract_edges(
-                    self.clients,
+                    clients,
                     episode,
                     extracted_nodes,
                     previous_episodes,
@@ -535,7 +537,7 @@ class Graphiti:
 
             (resolved_edges, invalidated_edges), hydrated_nodes = await semaphore_gather(
                 resolve_extracted_edges(
-                    self.clients,
+                    clients,
                     edges,
                     episode,
                     nodes,
@@ -543,7 +545,7 @@ class Graphiti:
                     edge_type_map or edge_type_map_default,
                 ),
                 extract_attributes_from_nodes(
-                    self.clients, nodes, episode, previous_episodes, entity_types
+                    clients, nodes, episode, previous_episodes, entity_types
                 ),
                 max_coroutines=self.max_coroutines,
             )
@@ -560,7 +562,7 @@ class Graphiti:
                 episode.content = ''
 
             await add_nodes_and_edges_bulk(
-                self.driver, [episode], episodic_edges, hydrated_nodes, entity_edges, self.embedder
+                driver, [episode], episodic_edges, hydrated_nodes, entity_edges, self.embedder
             )
 
             communities = []
@@ -571,7 +573,7 @@ class Graphiti:
                 communities, community_edges = await semaphore_gather(
                     *[
                         update_community(
-                            self.driver, self.llm_client, self.embedder, node, self.ensure_ascii
+                            driver, self.llm_client, self.embedder, node, self.ensure_ascii
                         )
                         for node in nodes
                     ],
@@ -647,14 +649,16 @@ class Graphiti:
             validate_group_id(group_id)
 
             # FalkorDB: route to per-project graph via driver.clone()
-            if group_id != self.driver._database:
-                self.driver = self.driver.clone(database=group_id)
-                self.clients = GraphitiClients(
-                    driver=self.driver,
-                    llm_client=self.llm_client,
-                    embedder=self.embedder,
-                    cross_encoder=self.cross_encoder,
-                )
+            # Use LOCAL variables to avoid mutating shared self.driver/self.clients state
+            driver = self.driver
+            if group_id != driver._database:
+                driver = driver.clone(database=group_id)
+            clients = GraphitiClients(
+                driver=driver,
+                llm_client=self.llm_client,
+                embedder=self.embedder,
+                cross_encoder=self.cross_encoder,
+            )
 
             # Create default edge type map
             edge_type_map_default = (
@@ -664,7 +668,7 @@ class Graphiti:
             )
 
             episodes = [
-                await EpisodicNode.get_by_uuid(self.driver, episode.uuid)
+                await EpisodicNode.get_by_uuid(driver, episode.uuid)
                 if episode.uuid is not None
                 else EpisodicNode(
                     name=episode.name,
@@ -685,7 +689,7 @@ class Graphiti:
 
             # Save all episodes
             await add_nodes_and_edges_bulk(
-                driver=self.driver,
+                driver=driver,
                 episodic_nodes=episodes,
                 episodic_edges=[],
                 entity_nodes=[],
@@ -694,11 +698,11 @@ class Graphiti:
             )
 
             # Get previous episode context for each episode
-            episode_context = await retrieve_previous_episodes_bulk(self.driver, episodes)
+            episode_context = await retrieve_previous_episodes_bulk(driver, episodes)
 
             # Extract all nodes and edges for each episode
             extracted_nodes_bulk, extracted_edges_bulk = await extract_nodes_and_edges_bulk(
-                self.clients,
+                clients,
                 episode_context,
                 edge_type_map=edge_type_map or edge_type_map_default,
                 edge_types=edge_types,
@@ -708,7 +712,7 @@ class Graphiti:
 
             # Dedupe extracted nodes in memory
             nodes_by_episode, uuid_map = await dedupe_nodes_bulk(
-                self.clients, extracted_nodes_bulk, episode_context, entity_types
+                clients, extracted_nodes_bulk, episode_context, entity_types
             )
 
             # Create Episodic Edges
@@ -723,7 +727,7 @@ class Graphiti:
 
             # Dedupe extracted edges in memory
             edges_by_episode = await dedupe_edges_bulk(
-                self.clients,
+                clients,
                 extracted_edges_bulk_updated,
                 episode_context,
                 [],
@@ -755,7 +759,7 @@ class Graphiti:
             new_hydrated_nodes: list[list[EntityNode]] = await semaphore_gather(
                 *[
                     extract_attributes_from_nodes(
-                        self.clients,
+                        clients,
                         [params[0]],
                         params[1][0],
                         params[1][0:],
@@ -785,7 +789,7 @@ class Graphiti:
             node_results = await semaphore_gather(
                 *[
                     resolve_extracted_nodes(
-                        self.clients,
+                        clients,
                         nodes_by_episode_unique[episode.uuid],
                         episode,
                         previous_episodes,
@@ -820,7 +824,7 @@ class Graphiti:
             hydrated_nodes_results: list[list[EntityNode]] = await semaphore_gather(
                 *[
                     extract_attributes_from_nodes(
-                        self.clients,
+                        clients,
                         nodes_by_episode_unique[episode.uuid],
                         episode,
                         previous_episodes,
@@ -846,7 +850,7 @@ class Graphiti:
             edge_results = await semaphore_gather(
                 *[
                     resolve_extracted_edges(
-                        self.clients,
+                        clients,
                         edges_by_episode_unique[episode.uuid],
                         episode,
                         hydrated_nodes,
@@ -868,7 +872,7 @@ class Graphiti:
 
             # save data to KG
             await add_nodes_and_edges_bulk(
-                self.driver,
+                driver,
                 episodes,
                 resolved_episodic_edges,
                 final_hydrated_nodes,
