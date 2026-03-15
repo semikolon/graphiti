@@ -103,11 +103,18 @@ def lucene_sanitize(query: str) -> str:
 
     sanitized = query.translate(escape_map)
 
-    # Step 2: Filter out standalone boolean operators (case-insensitive)
-    # RediSearch interprets OR, AND, NOT as boolean operators even in lowercase
-    boolean_operators = {'or', 'and', 'not'}
+    # Step 2: Filter out standalone reserved words (case-insensitive)
+    # RediSearch interprets these as operators/functions even in content queries.
+    # Boolean operators: OR, AND, NOT
+    # Aggregation/query reserved words: MAP, REDUCE, FILTER, GROUPBY, SORTBY,
+    #   APPLY, LIMIT, LOAD, AS (cause "Syntax error near map" etc.)
+    reserved_words = {
+        'or', 'and', 'not',
+        'map', 'reduce', 'filter', 'groupby', 'sortby',
+        'apply', 'limit', 'load', 'as',
+    }
     words = sanitized.split()
-    filtered_words = [w for w in words if w.lower() not in boolean_operators]
+    filtered_words = [w for w in words if w.lower() not in reserved_words]
 
     return ' '.join(filtered_words)
 
