@@ -57,12 +57,14 @@ from graphiti_core.search.search_config_recipes import (
 from graphiti_core.search.search_filters import SearchFilters
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data
 
-# FalkorDBLite support - embedded FalkorDB without Docker
+load_dotenv()
+
+# FalkorDBLite support - embedded FalkorDB without Docker.
+# load_dotenv() must happen before we resolve USE_FALKORDBLITE so direct launches
+# respect the .env file without requiring an outer shell wrapper to source it.
 USE_FALKORDBLITE = os.environ.get('USE_FALKORDBLITE', '').lower() in ('1', 'true', 'yes')
 if USE_FALKORDBLITE:
     from redislite import AsyncFalkorDB as EmbeddedAsyncFalkorDB
-
-load_dotenv()
 
 
 DEFAULT_LLM_MODEL = 'gpt-5-mini'
@@ -649,13 +651,19 @@ async def initialize_graphiti():
             embedded_db = EmbeddedAsyncFalkorDB(dbfilename=falkordblite_path)
             falkor_driver = FalkorDriver(falkor_db=embedded_db)
         else:
-            # Docker FalkorDB: connect to external server
-            # Port is configurable via FALKORDB_REDIS_PORT env var (default 6379, use 6380 to avoid Homebrew Redis conflict)
-            # Password via FALKORDB_PASSWORD (matches --requirepass arg in docker run)
-            logger.info('Using Docker FalkorDB')
+            # External FalkorDB-compatible server (official FalkorDB or Lite singleton).
+            # Host defaults to localhost so existing local setups keep working.
+            falkordb_host = os.environ.get('FALKORDB_HOST', '127.0.0.1')
+            falkordb_port = int(
+                os.environ.get('FALKORDB_PORT')
+                or os.environ.get('FALKORDB_REDIS_PORT', '6379')
+            )
+            if os.environ.get('FALKORDB_REDIS_PORT') and not os.environ.get('FALKORDB_PORT'):
+                logger.info('Using legacy FALKORDB_REDIS_PORT env var; prefer FALKORDB_PORT')
+            logger.info(f'Using external FalkorDB at {falkordb_host}:{falkordb_port}')
             falkor_driver = FalkorDriver(
-                host='localhost',
-                port=int(os.environ.get('FALKORDB_REDIS_PORT', '6379')),
+                host=falkordb_host,
+                port=falkordb_port,
                 password=os.environ.get('FALKORDB_PASSWORD'),
             )
 

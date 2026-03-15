@@ -186,7 +186,10 @@ cd graphiti && pwd
 ### Prerequisites
 
 1. Ensure you have Python 3.10 or higher installed.
-2. A running Neo4j database (version 5.26 or later required)
+2. Choose one Graph backend shape:
+   - Embedded FalkorDBLite in-process (`USE_FALKORDBLITE=1`)
+   - External FalkorDB-compatible server (`USE_FALKORDBLITE=0`)
+   - Lite-backed singleton service that runs FalkorDBLite's bundled `redis-server` + `falkordb.so`
 3. OpenAI API key for LLM operations
 
 ### Setup
@@ -206,9 +209,12 @@ uv sync
 
 The server uses the following environment variables:
 
-- `NEO4J_URI`: URI for the Neo4j database (default: `bolt://localhost:7687`)
-- `NEO4J_USER`: Neo4j username (default: `neo4j`)
-- `NEO4J_PASSWORD`: Neo4j password (default: `demodemo`)
+- `USE_FALKORDBLITE`: `1` for embedded Lite mode, `0` for an external FalkorDB-compatible server.
+- `FALKORDBLITE_PATH`: Path to the embedded Lite `.rdb` file when `USE_FALKORDBLITE=1`.
+- `FALKORDB_HOST`: Hostname for an external FalkorDB-compatible server.
+- `FALKORDB_PORT`: Port for an external FalkorDB-compatible server.
+- `FALKORDB_PASSWORD`: Optional password for an external FalkorDB-compatible server.
+- `FALKORDB_REDIS_PORT`: Legacy alias for `FALKORDB_PORT`, still accepted for compatibility.
 - `OPENAI_API_KEY`: OpenAI API key (required for LLM operations)
 - `OPENAI_BASE_URL`: Optional base URL for OpenAI API
 - `MODEL_NAME`: OpenAI model name to use for LLM operations.
@@ -257,10 +263,48 @@ By default, `SEMAPHORE_LIMIT` is set to `10` concurrent operations to help preve
 
 If your LLM provider allows higher throughput, you can increase `SEMAPHORE_LIMIT` to boost episode ingestion performance.
 
+### Deployment Modes
+
+The MCP server supports three practical deployment shapes:
+
+1. **Embedded FalkorDBLite**
+   - `USE_FALKORDBLITE=1`
+   - Each Graphiti process starts/attaches to an embedded FalkorDBLite instance.
+   - Good for single-process local development.
+
+2. **External FalkorDB-compatible server**
+   - `USE_FALKORDBLITE=0`
+   - Configure `FALKORDB_HOST`, `FALKORDB_PORT`, and `FALKORDB_PASSWORD`.
+   - Works with an official FalkorDB server or any FalkorDB-compatible Redis service.
+
+3. **Lite-backed singleton service**
+   - Export FalkorDBLite's bundled runtime files to a stable directory.
+   - Run `redis-server` + `falkordb.so` as a long-lived local service (for example via `launchd`).
+   - Point Graphiti at that service with `USE_FALKORDBLITE=0`.
+   - This keeps Lite's ABI-matched runtime while avoiding per-process embedded spawning.
+
+#### Exporting FalkorDBLite's bundled runtime
+
+You can export FalkorDBLite's bundled binaries and shared libraries to a stable
+service directory with:
+
+```bash
+cd mcp_server
+.venv/bin/python scripts/export_falkordblite_runtime.py --target ~/.graphiti
+```
+
+This copies the bundled `redis-server`, `redis-cli`, `falkordb.so`, and
+required `.dylibs` into the target directory without touching your `.rdb` file.
+
 ### Docker Deployment
 
-The Graphiti MCP server can be deployed using Docker. The Dockerfile uses `uv` for package management, ensuring
-consistent dependency installation.
+The Graphiti MCP server can still be containerized, but the server now expects either:
+
+- embedded FalkorDBLite in the process, or
+- an external FalkorDB-compatible service that the container can reach.
+
+For long-lived local development on macOS, this fork's preferred setup is the Lite-backed singleton service described
+above rather than containerizing the database itself.
 
 #### Environment Configuration
 
@@ -274,7 +318,7 @@ Before running the Docker Compose setup, you need to configure the environment v
      ```
    - Edit the `.env` file to set your OpenAI API key and other configuration options:
      ```
-     # Required for LLM operations
+     USE_FALKORDBLITE=1
      OPENAI_API_KEY=your_openai_api_key_here
      MODEL_NAME=gpt-5-mini
      # Optional: OPENAI_BASE_URL only needed for non-standard OpenAI endpoints
@@ -287,14 +331,6 @@ Before running the Docker Compose setup, you need to configure the environment v
      ```bash
      OPENAI_API_KEY=your_key MODEL_NAME=gpt-5-mini docker compose up
      ```
-
-#### Neo4j Configuration
-
-The Docker Compose setup includes a Neo4j container with the following default configuration:
-
-- Username: `neo4j`
-- Password: `demodemo`
-- URI: `bolt://neo4j:7687` (from within the Docker network)
 - Memory settings optimized for development use
 
 #### Running with Docker Compose
@@ -313,13 +349,13 @@ Or if you're using an older version of Docker Compose:
 docker-compose up
 ```
 
-This will start both the Neo4j database and the Graphiti MCP server. The Docker setup:
+This starts the Graphiti MCP server in a container. Pair it with either embedded Lite mode or an external FalkorDB-compatible service. The Docker setup:
 
 - Uses `uv` for package management and running the server
 - Installs dependencies from the `pyproject.toml` file
-- Connects to the Neo4j container using the environment variables
+- Reads Graphiti configuration from environment variables or `.env`
 - Exposes the server on port 8000 for HTTP-based SSE transport
-- Includes a healthcheck for Neo4j to ensure it's fully operational before starting the MCP server
+- Expects any external FalkorDB-compatible dependency to be reachable from the container network
 
 ## Integrating with MCP Clients
 
@@ -483,7 +519,7 @@ The Graphiti MCP Server container uses the SSE MCP transport. Claude Desktop doe
 ## Requirements
 
 - Python 3.10 or higher
-- Neo4j database (version 5.26 or later required)
+- Either embedded FalkorDBLite or a reachable external FalkorDB-compatible service
 - OpenAI API key (for LLM operations and embeddings)
 - MCP-compatible client
 
