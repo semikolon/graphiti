@@ -796,11 +796,24 @@ episode_queues: dict[str, asyncio.Queue] = {}
 queue_workers: dict[str, bool] = {}
 
 
+# Strong references to worker tasks — prevents GC from collecting them mid-execution.
+# See Graphiti #1176: asyncio.create_task() without strong ref = silent worker death.
+# Python docs: "Important: Save a reference to the result of create_task(),
+# otherwise the task may get garbage-collected mid-execution."
+_worker_tasks: dict[str, asyncio.Task] = {}
+
+
 async def process_episode_queue(group_id: str):
     """Process episodes for a specific group_id sequentially.
 
     This function runs as a long-lived task that processes episodes
     from the queue one at a time.
+
+    IMPORTANT — No asyncio.wait_for around episode processing:
+    asyncio.wait_for cancels tasks via CancelledError, which corrupts httpx
+    connection pools permanently (httpcore #961, wontfix). httpx native timeouts
+    (read=120s) handle individual API hangs safely at the socket level.
+    Normal episode processing takes 150-400s (15-30+ sequential LLM calls).
     """
     global queue_workers
 
@@ -813,26 +826,22 @@ async def process_episode_queue(group_id: str):
             # This will wait if the queue is empty
             process_func = await episode_queues[group_id].get()
 
+            start_time = asyncio.get_event_loop().time()
             try:
-                # 10-minute timeout: add_episode with custom entities makes 15-30+
-                # sequential LLM calls (extract + reflexion + resolve + edges + attributes).
-                # Normal processing: 150-400s. Only fires on truly hung connections.
-                await asyncio.wait_for(process_func(), timeout=600)
-            except asyncio.TimeoutError:
-                logger.error(
-                    f'Episode processing TIMED OUT after 600s for group_id {group_id} '
-                    f'— likely hung OpenAI API call (CLOSE_WAIT). Skipping to next episode.'
-                )
-                record_error("episode_timeout", "Processing timed out after 300s", group_id=group_id)
-                notify_episode_failure(
-                    "TIMEOUT", group_id,
-                    "Episode processing timed out after 300s — OpenAI API may be hung"
-                )
+                # No asyncio.wait_for — httpx native timeouts protect individual calls.
+                # Cancelling mid-httpx-request corrupts the connection pool (httpcore #961).
+                await process_func()
             except Exception as e:
                 error_msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
                 logger.error(f'Error processing queued episode for group_id {group_id}: {error_msg}')
                 record_error("episode_processing", error_msg, group_id=group_id)
             finally:
+                elapsed = asyncio.get_event_loop().time() - start_time
+                if elapsed > 300:
+                    logger.warning(
+                        f'Episode processing for group_id {group_id} took {elapsed:.0f}s '
+                        f'(>5 min — graph may be growing large, see Graphiti #1275)'
+                    )
                 # Mark the task as done regardless of success/failure
                 episode_queues[group_id].task_done()
     except asyncio.CancelledError:
@@ -845,6 +854,7 @@ async def process_episode_queue(group_id: str):
     finally:
         remaining = episode_queues[group_id].qsize() if group_id in episode_queues else 0
         queue_workers[group_id] = False
+        _worker_tasks.pop(group_id, None)  # Clean up strong reference
         logger.info(f'Stopped episode queue worker for group_id: {group_id} ({remaining} episodes remaining in queue)')
         if remaining > 0:
             notify_episode_failure(
@@ -1000,7 +1010,8 @@ async def add_memory(
 
         # Start a worker for this queue if one isn't already running
         if not queue_workers.get(group_id_str, False):
-            asyncio.create_task(process_episode_queue(group_id_str))
+            task = asyncio.create_task(process_episode_queue(group_id_str))
+            _worker_tasks[group_id_str] = task  # Strong ref prevents GC (Graphiti #1176)
 
         # Return immediately with a success message
         return SuccessResponse(
@@ -1125,7 +1136,8 @@ async def add_global_memory(
 
         # Start a worker for this queue if one isn't already running
         if not queue_workers.get(group_id_str, False):
-            asyncio.create_task(process_episode_queue(group_id_str))
+            task = asyncio.create_task(process_episode_queue(group_id_str))
+            _worker_tasks[group_id_str] = task  # Strong ref prevents GC (Graphiti #1176)
 
         # Return immediately with a success message
         return SuccessResponse(
