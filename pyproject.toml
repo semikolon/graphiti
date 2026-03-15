@@ -89,6 +89,12 @@ quote-style = "single"
 indent-style = "space"
 docstring-code-format = true
 
+[tool.uv]
+package = true
+
+[tool.uv.workspace]
+members = ["mcp_server"]
+
 [tool.pyright]
 include = ["graphiti_core"]
 pythonVersion = "3.10"
