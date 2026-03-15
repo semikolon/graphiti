@@ -661,10 +661,14 @@ async def initialize_graphiti():
             if os.environ.get('FALKORDB_REDIS_PORT') and not os.environ.get('FALKORDB_PORT'):
                 logger.info('Using legacy FALKORDB_REDIS_PORT env var; prefer FALKORDB_PORT')
             logger.info(f'Using external FalkorDB at {falkordb_host}:{falkordb_port}')
+            # Use config.group_id as database name so the driver queries the
+            # correct per-project FalkorDB graph (FalkorDB uses separate named
+            # graphs for multi-tenancy, unlike Neo4j which uses node properties).
             falkor_driver = FalkorDriver(
                 host=falkordb_host,
                 port=falkordb_port,
                 password=os.environ.get('FALKORDB_PASSWORD'),
+                database=config.group_id or 'default_db',
             )
 
         # Initialize Graphiti client with FalkorDB driver
