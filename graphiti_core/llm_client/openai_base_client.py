@@ -115,14 +115,22 @@ class BaseOpenAIClient(LLMClient):
 
     def _handle_structured_response(self, response: Any) -> dict[str, Any]:
         """Handle structured response parsing and validation."""
-        response_object = response.output_text
+        # response.output_text is a string (Responses API), not a parsed object
+        output_text = response.output_text
 
-        if response_object:
-            return json.loads(response_object)
-        elif response_object.refusal:
-            raise RefusalError(response_object.refusal)
-        else:
-            raise Exception(f'Invalid response from LLM: {response_object.model_dump()}')
+        if output_text:
+            return json.loads(output_text)
+
+        # output_text is empty — check for refusal at the response level
+        # (Responses API doesn't put refusal on output_text like Chat Completions did)
+        refusal = getattr(response, 'refusal', None)
+        if refusal:
+            raise RefusalError(refusal)
+
+        raise Exception(
+            f'Invalid response from LLM: empty output_text '
+            f'(response type: {type(response).__name__})'
+        )
 
     def _handle_json_response(self, response: Any) -> dict[str, Any]:
         """Handle JSON response parsing."""
