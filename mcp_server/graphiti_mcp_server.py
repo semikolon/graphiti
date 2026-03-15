@@ -814,11 +814,13 @@ async def process_episode_queue(group_id: str):
             process_func = await episode_queues[group_id].get()
 
             try:
-                # Process the episode with a 5-minute timeout to prevent hung API calls
-                await asyncio.wait_for(process_func(), timeout=300)
+                # 10-minute timeout: add_episode with custom entities makes 15-30+
+                # sequential LLM calls (extract + reflexion + resolve + edges + attributes).
+                # Normal processing: 150-400s. Only fires on truly hung connections.
+                await asyncio.wait_for(process_func(), timeout=600)
             except asyncio.TimeoutError:
                 logger.error(
-                    f'Episode processing TIMED OUT after 300s for group_id {group_id} '
+                    f'Episode processing TIMED OUT after 600s for group_id {group_id} '
                     f'— likely hung OpenAI API call (CLOSE_WAIT). Skipping to next episode.'
                 )
                 record_error("episode_timeout", "Processing timed out after 300s", group_id=group_id)
@@ -964,21 +966,20 @@ async def add_memory(
                 # Use all entity types if use_custom_entities is enabled, otherwise use empty dict
                 entity_types = ENTITY_TYPES if config.use_custom_entities else {}
 
-                await asyncio.wait_for(
-                    client.add_episode(
-                        name=name,
-                        episode_body=episode_body,
-                        source=source_type,
-                        source_description=source_description,
-                        group_id=group_id_str,  # Using the string version of group_id
-                        uuid=uuid,
-                        reference_time=effective_reference_time,
-                        entity_types=entity_types,
-                    ),
-                    timeout=240,  # 4 min — inner timeout fires before outer 5 min
+                # No inner timeout — the outer process_episode_queue timeout handles hung calls.
+                # Inner timeouts swallow errors and lose episodes silently.
+                # Full add_episode pipeline (extract nodes + reflexion + resolve + edges + attributes)
+                # makes 15-30+ sequential LLM calls at ~10s each = 150-400s normally.
+                await client.add_episode(
+                    name=name,
+                    episode_body=episode_body,
+                    source=source_type,
+                    source_description=source_description,
+                    group_id=group_id_str,  # Using the string version of group_id
+                    uuid=uuid,
+                    reference_time=effective_reference_time,
+                    entity_types=entity_types,
                 )
-                logger.info(f"Episode '{name}' added successfully")
-
                 logger.info(f"Episode '{name}' processed successfully")
             except Exception as e:
                 # str(e) is empty for some exceptions (e.g. asyncio.TimeoutError)
@@ -986,6 +987,7 @@ async def add_memory(
                 logger.error(
                     f"Error processing episode '{name}' for group_id {group_id_str}: {error_msg}"
                 )
+                record_error("episode_processing", error_msg, group_id=group_id_str, episode_name=name)
                 # Send macOS notification for failed episode
                 notify_episode_failure(name, group_id_str, error_msg)
 
