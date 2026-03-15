@@ -118,7 +118,7 @@ async def extract_edges(
 ) -> list[EntityEdge]:
     start = time()
 
-    extract_edges_max_tokens = 16384
+    extract_edges_max_tokens = 30000
     llm_client = clients.llm_client
 
     edge_type_signature_map: dict[str, tuple[str, str]] = {

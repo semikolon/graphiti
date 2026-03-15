@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from ..prompts.models import Message
 from .client import MULTILINGUAL_EXTRACTION_RESPONSES, LLMClient
 from .config import DEFAULT_MAX_TOKENS, LLMConfig, ModelSize
-from .errors import RateLimitError, RefusalError
+from .errors import RateLimitError, RefusalError, TruncationError
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,18 @@ class BaseOpenAIClient(LLMClient):
         output_text = response.output_text
 
         if output_text:
-            return json.loads(output_text)
+            try:
+                return json.loads(output_text)
+            except json.JSONDecodeError:
+                # Check if response was truncated due to max_output_tokens
+                # (Responses API sets status='incomplete' when output is cut short)
+                status = getattr(response, 'status', None)
+                if status == 'incomplete':
+                    raise TruncationError(
+                        f'Response truncated (status: incomplete). '
+                        f'JSON output was cut short by max_output_tokens limit.'
+                    )
+                raise
 
         # output_text is empty — check for refusal at the response level
         # (Responses API doesn't put refusal on output_text like Chat Completions did)
@@ -170,7 +181,13 @@ class BaseOpenAIClient(LLMClient):
                 return self._handle_json_response(response)
 
         except openai.LengthFinishReasonError as e:
-            raise Exception(f'Output length exceeded max tokens {self.max_tokens}: {e}') from e
+            raise TruncationError(
+                f'Output length exceeded max tokens {max_tokens}',
+                max_tokens=max_tokens,
+            ) from e
+        except TruncationError:
+            # Already a TruncationError (from _handle_structured_response) — propagate
+            raise
         except openai.RateLimitError as e:
             raise RateLimitError from e
         except Exception as e:
@@ -206,6 +223,25 @@ class BaseOpenAIClient(LLMClient):
             except (openai.APITimeoutError, openai.APIConnectionError, openai.InternalServerError):
                 # Let OpenAI's client handle these retries
                 raise
+            except TruncationError as e:
+                last_error = e
+
+                if retry_count >= self.MAX_RETRIES:
+                    logger.error(
+                        f'Max retries ({self.MAX_RETRIES}) exceeded after truncation. '
+                        f'Last max_tokens: {max_tokens}'
+                    )
+                    raise
+
+                retry_count += 1
+                # Double max_tokens for retry (cap at 65536)
+                max_tokens = min(max_tokens * 2, 65536)
+                logger.warning(
+                    f'Response truncated, retrying with doubled max_tokens={max_tokens} '
+                    f'(attempt {retry_count}/{self.MAX_RETRIES})'
+                )
+                # Don't append error message to LLM — more output space is the fix,
+                # not a different prompt
             except Exception as e:
                 last_error = e
 

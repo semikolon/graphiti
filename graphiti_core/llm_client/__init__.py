@@ -16,7 +16,7 @@ limitations under the License.
 
 from .client import LLMClient
 from .config import LLMConfig
-from .errors import RateLimitError
+from .errors import RateLimitError, TruncationError
 from .openai_client import OpenAIClient
 
-__all__ = ['LLMClient', 'OpenAIClient', 'LLMConfig', 'RateLimitError']
+__all__ = ['LLMClient', 'OpenAIClient', 'LLMConfig', 'RateLimitError', 'TruncationError']

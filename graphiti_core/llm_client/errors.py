@@ -37,3 +37,12 @@ class EmptyResponseError(Exception):
     def __init__(self, message: str):
         self.message = message
         super().__init__(self.message)
+
+
+class TruncationError(Exception):
+    """Exception raised when the LLM response is truncated due to max_output_tokens."""
+
+    def __init__(self, message: str, max_tokens: int | None = None):
+        self.message = message
+        self.max_tokens = max_tokens
+        super().__init__(self.message)
