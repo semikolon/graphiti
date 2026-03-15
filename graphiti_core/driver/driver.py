@@ -87,3 +87,7 @@ class GraphDriver(ABC):
         cloned._database = database
 
         return cloned
+
+    def clone(self, database: str) -> 'GraphDriver':
+        """Alias for with_database. Overridden by FalkorDriver for connection reuse."""
+        return self.with_database(database)

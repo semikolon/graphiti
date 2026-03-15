@@ -24,6 +24,7 @@ from typing_extensions import LiteralString
 
 from graphiti_core.cross_encoder.client import CrossEncoderClient
 from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
+from graphiti_core.decorators import handle_multiple_group_ids
 from graphiti_core.driver.driver import GraphDriver
 from graphiti_core.driver.neo4j_driver import Neo4jDriver
 from graphiti_core.edges import (
@@ -336,12 +337,14 @@ class Graphiti:
         """
         await build_indices_and_constraints(self.driver, delete_existing)
 
+    @handle_multiple_group_ids
     async def retrieve_episodes(
         self,
         reference_time: datetime,
         last_n: int = EPISODE_WINDOW_LEN,
         group_ids: list[str] | None = None,
         source: EpisodeType | None = None,
+        driver: GraphDriver | None = None,
     ) -> list[EpisodicNode]:
         """
         Retrieve the last n episodic nodes from the graph.
@@ -357,6 +360,8 @@ class Graphiti:
             The number of episodes to retrieve. Defaults to EPISODE_WINDOW_LEN.
         group_ids : list[str | None], optional
             The group ids to return data from.
+        driver : GraphDriver | None, optional
+            Override driver for graph-per-group routing (used by decorator).
 
         Returns
         -------
@@ -368,7 +373,9 @@ class Graphiti:
         The actual retrieval is performed by the `retrieve_episodes` function
         from the `graphiti_core.utils` module.
         """
-        return await retrieve_episodes(self.driver, reference_time, last_n, group_ids, source)
+        if driver is None:
+            driver = self.driver
+        return await retrieve_episodes(driver, reference_time, last_n, group_ids, source)
 
     async def add_episode(
         self,
@@ -451,6 +458,17 @@ class Graphiti:
 
             validate_excluded_entity_types(excluded_entity_types, entity_types)
             validate_group_id(group_id)
+
+            # FalkorDB: route to per-project graph via driver.clone()
+            if group_id != self.driver._database:
+                self.driver = self.driver.clone(database=group_id)
+                self.clients = GraphitiClients(
+                    driver=self.driver,
+                    llm_client=self.llm_client,
+                    embedder=self.embedder,
+                    cross_encoder=self.cross_encoder,
+                )
+
             await build_dynamic_indexes(self.driver, group_id)
 
             previous_episodes = (
@@ -627,6 +645,16 @@ class Graphiti:
             # if group_id is None, use the default group id by the provider
             group_id = group_id or get_default_group_id(self.driver.provider)
             validate_group_id(group_id)
+
+            # FalkorDB: route to per-project graph via driver.clone()
+            if group_id != self.driver._database:
+                self.driver = self.driver.clone(database=group_id)
+                self.clients = GraphitiClients(
+                    driver=self.driver,
+                    llm_client=self.llm_client,
+                    embedder=self.embedder,
+                    cross_encoder=self.cross_encoder,
+                )
 
             # Create default edge type map
             edge_type_map_default = (
@@ -854,21 +882,29 @@ class Graphiti:
         except Exception as e:
             raise e
 
+    @handle_multiple_group_ids
     async def build_communities(
-        self, group_ids: list[str] | None = None
+        self,
+        group_ids: list[str] | None = None,
+        driver: GraphDriver | None = None,
     ) -> tuple[list[CommunityNode], list[CommunityEdge]]:
         """
         Use a community clustering algorithm to find communities of nodes. Create community nodes summarising
         the content of these communities.
         ----------
-        query : list[str] | None
+        group_ids : list[str] | None
             Optional. Create communities only for the listed group_ids. If blank the entire graph will be used.
+        driver : GraphDriver | None
+            Override driver for graph-per-group routing (used by decorator).
         """
+        if driver is None:
+            driver = self.driver
+
         # Clear existing communities
-        await remove_communities(self.driver)
+        await remove_communities(driver)
 
         community_nodes, community_edges = await build_communities(
-            self.driver, self.llm_client, group_ids
+            driver, self.llm_client, group_ids
         )
 
         await semaphore_gather(
@@ -877,16 +913,17 @@ class Graphiti:
         )
 
         await semaphore_gather(
-            *[node.save(self.driver) for node in community_nodes],
+            *[node.save(driver) for node in community_nodes],
             max_coroutines=self.max_coroutines,
         )
         await semaphore_gather(
-            *[edge.save(self.driver) for edge in community_edges],
+            *[edge.save(driver) for edge in community_edges],
             max_coroutines=self.max_coroutines,
         )
 
         return community_nodes, community_edges
 
+    @handle_multiple_group_ids
     async def search(
         self,
         query: str,
@@ -894,6 +931,7 @@ class Graphiti:
         group_ids: list[str] | None = None,
         num_results=DEFAULT_SEARCH_LIMIT,
         search_filter: SearchFilters | None = None,
+        driver: GraphDriver | None = None,
     ) -> list[EntityEdge]:
         """
         Perform a hybrid search on the knowledge graph.
@@ -914,6 +952,8 @@ class Graphiti:
             The graph partitions to return data from.
         num_results : int, optional
             The maximum number of results to return. Defaults to 10.
+        driver : GraphDriver | None, optional
+            Override driver for graph-per-group routing (used by decorator).
 
         Returns
         -------
@@ -941,6 +981,7 @@ class Graphiti:
                 search_config,
                 search_filter if search_filter is not None else SearchFilters(),
                 center_node_uuid,
+                driver=driver,
             )
         ).edges
 
@@ -960,6 +1001,7 @@ class Graphiti:
             query, config, group_ids, center_node_uuid, bfs_origin_node_uuids, search_filter
         )
 
+    @handle_multiple_group_ids
     async def search_(
         self,
         query: str,
@@ -968,6 +1010,7 @@ class Graphiti:
         center_node_uuid: str | None = None,
         bfs_origin_node_uuids: list[str] | None = None,
         search_filter: SearchFilters | None = None,
+        driver: GraphDriver | None = None,
     ) -> SearchResults:
         """search_ (replaces _search) is our advanced search method that returns Graph objects (nodes and edges) rather
         than a list of facts. This endpoint allows the end user to utilize more advanced features such as filters and
@@ -984,6 +1027,7 @@ class Graphiti:
             search_filter if search_filter is not None else SearchFilters(),
             center_node_uuid,
             bfs_origin_node_uuids,
+            driver=driver,
         )
 
     async def get_nodes_and_edges_by_episode(self, episode_uuids: list[str]) -> SearchResults:

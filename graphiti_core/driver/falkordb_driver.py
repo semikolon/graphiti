@@ -162,7 +162,13 @@ class FalkorDriver(GraphDriver):
         """
         Returns a shallow copy of this driver with a different default database.
         Reuses the same connection (e.g. FalkorDB, Neo4j).
-        """
-        cloned = FalkorDriver(falkor_db=self.client, database=database)
 
+        For FalkorDB, each group_id maps to a separate named graph within the
+        same Redis instance. Cloning creates a driver that queries a different
+        graph while sharing the connection.
+        """
+        if database == self._database:
+            return self
+
+        cloned = FalkorDriver(falkor_db=self.client, database=database)
         return cloned
