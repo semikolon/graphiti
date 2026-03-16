@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import hashlib
 import logging
 from collections import defaultdict
 from time import time
@@ -64,6 +65,30 @@ from graphiti_core.search.search_utils import (
 
 logger = logging.getLogger(__name__)
 
+# In-memory embedding cache — avoids redundant API calls for repeated queries.
+# Keyed by MD5 of query text. No TTL needed (embeddings are deterministic for same input).
+# Bounded to 500 entries (~2MB at 1024 dims) to prevent unbounded growth.
+_embedding_cache: dict[str, list[float]] = {}
+_EMBEDDING_CACHE_MAX = 500
+
+
+async def _cached_embed(embedder, query: str) -> list[float]:
+    """Embed query text with in-memory cache. Cache hit = 0ms vs 100-400ms API call."""
+    key = hashlib.md5(query.encode()).hexdigest()
+    cached = _embedding_cache.get(key)
+    if cached is not None:
+        return cached
+
+    result = await embedder.create(input_data=[query.replace('\n', ' ')])
+
+    # Evict oldest entries if cache is full (simple FIFO via dict ordering)
+    if len(_embedding_cache) >= _EMBEDDING_CACHE_MAX:
+        oldest_key = next(iter(_embedding_cache))
+        del _embedding_cache[oldest_key]
+
+    _embedding_cache[key] = result
+    return result
+
 
 async def search(
     clients: GraphitiClients,
@@ -103,7 +128,7 @@ async def search(
         search_vector = (
             query_vector
             if query_vector is not None
-            else await embedder.create(input_data=[query.replace('\n', ' ')])
+            else await _cached_embed(embedder, query)
         )
     else:
         search_vector = [0.0] * EMBEDDING_DIM
