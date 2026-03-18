@@ -46,6 +46,7 @@ from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.edges import EntityEdge
 from graphiti_core.embedder.azure_openai import AzureOpenAIEmbedderClient
 from graphiti_core.embedder.client import EmbedderClient
+from graphiti_core.embedder.fallback import FallbackEmbedder
 from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.llm_client import LLMClient
 from graphiti_core.llm_client.azure_openai_client import AzureOpenAILLMClient
@@ -400,10 +401,13 @@ class GraphitiEmbedderConfig(BaseModel):
     """Configuration for the embedder client.
 
     Centralizes all embedding-related configuration parameters.
+    Supports local embedding servers (llama.cpp, TEI) via EMBEDDER_BASE_URL
+    with automatic fallback to OpenAI API when the local server is unreachable.
     """
 
     model: str = DEFAULT_EMBEDDER_MODEL
     api_key: str | None = None
+    base_url: str | None = None
     azure_openai_endpoint: str | None = None
     azure_openai_deployment_name: str | None = None
     azure_openai_api_version: str | None = None
@@ -416,6 +420,11 @@ class GraphitiEmbedderConfig(BaseModel):
         # Get model from environment, or use default if not set or empty
         model_env = os.environ.get('EMBEDDER_MODEL_NAME', '')
         model = model_env if model_env.strip() else DEFAULT_EMBEDDER_MODEL
+
+        # Local embedding server (llama.cpp, TEI, etc.)
+        base_url = os.environ.get('EMBEDDER_BASE_URL', None)
+        if base_url and not base_url.strip():
+            base_url = None
 
         azure_openai_endpoint = os.environ.get('AZURE_OPENAI_EMBEDDING_ENDPOINT', None)
         azure_openai_api_version = os.environ.get('AZURE_OPENAI_EMBEDDING_API_VERSION', None)
@@ -458,6 +467,7 @@ class GraphitiEmbedderConfig(BaseModel):
             return cls(
                 model=model,
                 api_key=os.environ.get('OPENAI_API_KEY'),
+                base_url=base_url,
             )
 
     def create_client(self) -> EmbedderClient | None:
@@ -489,6 +499,35 @@ class GraphitiEmbedderConfig(BaseModel):
             else:
                 logger.error('OPENAI_API_KEY must be set when using Azure OpenAI API')
                 return None
+        elif self.base_url:
+            # Local embedding server (llama.cpp, TEI, etc.)
+            # Primary: local server. Fallback: OpenAI API (if API key available).
+            primary = OpenAIEmbedder(
+                config=OpenAIEmbedderConfig(
+                    api_key=self.api_key or 'not-needed',
+                    embedding_model=self.model,
+                    base_url=self.base_url,
+                )
+            )
+
+            if self.api_key:
+                # Wrap with fallback to OpenAI API for when local server is down.
+                # Note: different models produce incompatible vector spaces —
+                # vector search degrades during fallback, BM25 fulltext still works.
+                fallback = OpenAIEmbedder(
+                    config=OpenAIEmbedderConfig(
+                        api_key=self.api_key,
+                        embedding_model=DEFAULT_EMBEDDER_MODEL,
+                    )
+                )
+                logger.info(
+                    f'Using local embedder at {self.base_url} '
+                    f'with OpenAI API fallback ({DEFAULT_EMBEDDER_MODEL})'
+                )
+                return FallbackEmbedder(primary=primary, fallback=fallback)
+
+            logger.info(f'Using local embedder at {self.base_url} (no fallback)')
+            return primary
         else:
             # OpenAI API setup
             if not self.api_key:
