@@ -104,8 +104,11 @@ class GeminiClient(LLMClient):
         Args:
             config (LLMConfig | None): The configuration for the LLM client, including API key, model, temperature, and max tokens.
             cache (bool): Whether to use caching for responses. Defaults to False.
-            thinking_config (types.ThinkingConfig | None): Optional thinking configuration for models that support it.
-                Only use with models that support thinking (gemini-2.5+). Defaults to None.
+            thinking_config (types.ThinkingConfig | None): Thinking configuration. For Gemini 3 Flash,
+                Google strongly recommends thinkingLevel="LOW" for classification/extraction tasks —
+                default "HIGH" causes thinking tokens to eat maxOutputTokens budget (97% truncation
+                observed without this). Also keep temperature=1.0 (looping risk at lower values).
+                See ~/dotfiles/docs/gemini_thinking_token_truncation_research_2026_03_30.md.
             client (genai.Client | None): An optional async client instance to use. If not provided, a new genai.Client is created.
         """
         if config is None:
@@ -121,7 +124,13 @@ class GeminiClient(LLMClient):
             self.client = client
 
         self.max_tokens = max_tokens
-        self.thinking_config = thinking_config
+        # Default to thinkingLevel="LOW" for Gemini 3+ models to prevent thinking
+        # tokens from eating the maxOutputTokens budget (Mar 30, 2026).
+        # Without this, 97% of JSON responses get truncated on Gemini 3 Flash.
+        if thinking_config is None and 'gemini-3' in (config.model or ''):
+            self.thinking_config = types.ThinkingConfig(thinking_level='LOW')
+        else:
+            self.thinking_config = thinking_config
 
     def _check_safety_blocks(self, response) -> None:
         """Check if response was blocked for safety reasons and raise appropriate exceptions."""
