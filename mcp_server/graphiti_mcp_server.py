@@ -58,7 +58,7 @@ from graphiti_core.search.search_config_recipes import (
     NODE_HYBRID_SEARCH_RRF,
 )
 from graphiti_core.search.search_filters import SearchFilters
-from graphiti_core.utils.maintenance.graph_data_operations import clear_data
+from graphiti_core.utils.maintenance.graph_data_operations import build_indices_and_constraints, clear_data
 
 load_dotenv()
 
@@ -1604,7 +1604,7 @@ async def search_cross_project_facts(
 
 
 @mcp.tool()
-async def delete_entity_edge(uuid: str) -> SuccessResponse | ErrorResponse:
+async def delete_entity_edge(uuid: str, ctx: Context) -> SuccessResponse | ErrorResponse:
     """Delete an entity edge from the graph memory.
 
     Args:
@@ -1622,10 +1622,14 @@ async def delete_entity_edge(uuid: str) -> SuccessResponse | ErrorResponse:
         # Use cast to help the type checker understand that graphiti_client is not None
         client = cast(Graphiti, graphiti_client)
 
+        # Use connection-specific group_id to clone the driver for the correct graph
+        group_id = get_effective_group_id(ctx)
+        driver = client.driver.clone(database=group_id)
+
         # Get the entity edge by UUID
-        entity_edge = await EntityEdge.get_by_uuid(client.driver, uuid)
+        entity_edge = await EntityEdge.get_by_uuid(driver, uuid)
         # Delete the edge using its delete method
-        await entity_edge.delete(client.driver)
+        await entity_edge.delete(driver)
         return SuccessResponse(message=f'Entity edge with UUID {uuid} deleted successfully')
     except Exception as e:
         error_msg = str(e)
@@ -1634,7 +1638,7 @@ async def delete_entity_edge(uuid: str) -> SuccessResponse | ErrorResponse:
 
 
 @mcp.tool()
-async def delete_episode(uuid: str) -> SuccessResponse | ErrorResponse:
+async def delete_episode(uuid: str, ctx: Context) -> SuccessResponse | ErrorResponse:
     """Delete an episode from the graph memory.
 
     Args:
@@ -1652,10 +1656,14 @@ async def delete_episode(uuid: str) -> SuccessResponse | ErrorResponse:
         # Use cast to help the type checker understand that graphiti_client is not None
         client = cast(Graphiti, graphiti_client)
 
+        # Use connection-specific group_id to clone the driver for the correct graph
+        group_id = get_effective_group_id(ctx)
+        driver = client.driver.clone(database=group_id)
+
         # Get the episodic node by UUID - EpisodicNode is already imported at the top
-        episodic_node = await EpisodicNode.get_by_uuid(client.driver, uuid)
+        episodic_node = await EpisodicNode.get_by_uuid(driver, uuid)
         # Delete the node using its delete method
-        await episodic_node.delete(client.driver)
+        await episodic_node.delete(driver)
         return SuccessResponse(message=f'Episode with UUID {uuid} deleted successfully')
     except Exception as e:
         error_msg = str(e)
@@ -1664,7 +1672,7 @@ async def delete_episode(uuid: str) -> SuccessResponse | ErrorResponse:
 
 
 @mcp.tool()
-async def get_entity_edge(uuid: str) -> dict[str, Any] | ErrorResponse:
+async def get_entity_edge(uuid: str, ctx: Context) -> dict[str, Any] | ErrorResponse:
     """Get an entity edge from the graph memory by its UUID.
 
     Args:
@@ -1682,8 +1690,12 @@ async def get_entity_edge(uuid: str) -> dict[str, Any] | ErrorResponse:
         # Use cast to help the type checker understand that graphiti_client is not None
         client = cast(Graphiti, graphiti_client)
 
+        # Use connection-specific group_id to clone the driver for the correct graph
+        group_id = get_effective_group_id(ctx)
+        driver = client.driver.clone(database=group_id)
+
         # Get the entity edge directly using the EntityEdge class method
-        entity_edge = await EntityEdge.get_by_uuid(client.driver, uuid)
+        entity_edge = await EntityEdge.get_by_uuid(driver, uuid)
 
         # Use the format_fact_result function to serialize the edge
         # Return the Python dict directly - MCP will handle serialization
@@ -1803,8 +1815,12 @@ async def get_global_episodes(
 
 
 @mcp.tool()
-async def clear_graph() -> SuccessResponse | ErrorResponse:
-    """Clear all data from the graph memory and rebuild indices."""
+async def clear_graph(ctx: Context) -> SuccessResponse | ErrorResponse:
+    """Clear all data from the CURRENT PROJECT graph memory and rebuild indices.
+
+    Scope: Uses group_id from config (set by shims wrapper based on git project).
+    Only clears the requesting session's graph, not other projects.
+    """
     global graphiti_client
 
     if graphiti_client is None:
@@ -1817,10 +1833,15 @@ async def clear_graph() -> SuccessResponse | ErrorResponse:
         # Use cast to help the type checker understand that graphiti_client is not None
         client = cast(Graphiti, graphiti_client)
 
+        # Use connection-specific group_id to clone the driver for the correct graph
+        group_id = get_effective_group_id(ctx)
+        driver = client.driver.clone(database=group_id)
+
         # clear_data is already imported at the top
-        await clear_data(client.driver)
-        await client.build_indices_and_constraints()
-        return SuccessResponse(message='Graph cleared successfully and indices rebuilt')
+        await clear_data(driver)
+        # Rebuild indices on the same scoped driver (not client.driver which may point to wrong graph)
+        await build_indices_and_constraints(driver)
+        return SuccessResponse(message=f'Graph for {group_id} cleared successfully and indices rebuilt')
     except Exception as e:
         error_msg = str(e)
         logger.error(f'Error clearing graph: {error_msg}')
@@ -1850,6 +1871,7 @@ async def get_recent_errors(
 @mcp.tool()
 async def raw_cypher_query(
     query: str,
+    ctx: Context,
     params: dict[str, Any] | None = None,
     max_results: int = 50,
 ) -> list[dict[str, Any]] | ErrorResponse:
@@ -1913,11 +1935,15 @@ async def raw_cypher_query(
     try:
         client = cast(Graphiti, graphiti_client)
 
+        # Use connection-specific group_id to clone the driver for the correct graph
+        group_id = get_effective_group_id(ctx)
+        driver = client.driver.clone(database=group_id)
+
         # Execute the query
         if params is None:
             params = {}
 
-        result = await client.driver.execute_query(query, **params)
+        result = await driver.execute_query(query, **params)
 
         if result is None:
             return []
@@ -2032,6 +2058,12 @@ async def initialize_server() -> MCPConfig:
         default=os.environ.get('MCP_SERVER_HOST'),
         help='Host to bind the MCP server to (default: MCP_SERVER_HOST environment variable)',
     )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=os.environ.get('MCP_SERVER_PORT'),
+        help='Port to bind the MCP server to (default: MCP_SERVER_PORT environment variable, or 8000)',
+    )
 
     args = parser.parse_args()
 
@@ -2055,8 +2087,13 @@ async def initialize_server() -> MCPConfig:
 
     if args.host:
         logger.info(f'Setting MCP server host to: {args.host}')
-        # Set MCP server host from CLI or env
         mcp.settings.host = args.host
+        # When binding to non-localhost, disable transport security (trusted LAN)
+        if args.host not in ('127.0.0.1', 'localhost', '::1'):
+            mcp.settings.transport_security = None
+    if args.port:
+        logger.info(f'Setting MCP server port to: {args.port}')
+        mcp.settings.port = args.port
 
     # Return MCP configuration
     return MCPConfig.from_cli(args)

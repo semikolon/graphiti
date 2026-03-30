@@ -7,17 +7,33 @@ Tests verify:
 4. LIMIT is auto-added when missing
 5. Parameterized queries work correctly
 6. Error handling works properly
+7. Per-connection group_id scoping via driver.clone
 
 Note: ErrorResponse is a TypedDict, so results are dicts with 'error' key.
 """
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from mcp.server.fastmcp import Context
 
 
 def is_error_response(result) -> bool:
     """Check if result is an error response (TypedDict with 'error' key)."""
     return isinstance(result, dict) and 'error' in result
+
+
+def create_context(group_id: str) -> Context:
+    """Create mock Context with custom header for group_id."""
+    ctx = MagicMock(spec=Context)
+    mock_request = MagicMock()
+    mock_request.headers.get = MagicMock(side_effect=lambda k: group_id if k in ['X-Graphiti-Group-Id', 'x-graphiti-group-id'] else None)
+    mock_request.query_params.get = MagicMock(return_value=None)
+    ctx.request_context.request = mock_request
+    return ctx
+
+
+# Default context for tests that don't focus on scoping
+DEFAULT_CTX = create_context("test-project")
 
 
 @pytest.fixture
@@ -27,6 +43,8 @@ def mock_graphiti_client():
         mock_client = MagicMock()
         mock_driver = MagicMock()
         mock_driver.execute_query = AsyncMock()
+        # clone returns the same driver (simulates same group_id optimization)
+        mock_driver.clone = MagicMock(return_value=mock_driver)
         mock_client.driver = mock_driver
         mock.__bool__ = lambda x: True  # Make it truthy
         mock.driver = mock_driver
@@ -50,7 +68,8 @@ async def test_blocks_create_operations(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="CREATE (n:Node {name: 'test'}) RETURN n"
+        query="CREATE (n:Node {name: 'test'}) RETURN n",
+        ctx=DEFAULT_CTX,
     )
 
     assert is_error_response(result)
@@ -64,7 +83,8 @@ async def test_blocks_delete_operations(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MATCH (n) DELETE n"
+        query="MATCH (n) DELETE n",
+        ctx=DEFAULT_CTX,
     )
 
     assert is_error_response(result)
@@ -77,7 +97,8 @@ async def test_blocks_set_operations(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MATCH (n) SET n.name = 'new' RETURN n"
+        query="MATCH (n) SET n.name = 'new' RETURN n",
+        ctx=DEFAULT_CTX,
     )
 
     assert is_error_response(result)
@@ -90,7 +111,8 @@ async def test_blocks_merge_operations(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MERGE (n:Node {name: 'test'}) RETURN n"
+        query="MERGE (n:Node {name: 'test'}) RETURN n",
+        ctx=DEFAULT_CTX,
     )
 
     assert is_error_response(result)
@@ -103,7 +125,8 @@ async def test_blocks_detach_delete(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MATCH (n) DETACH DELETE n"
+        query="MATCH (n) DETACH DELETE n",
+        ctx=DEFAULT_CTX,
     )
 
     assert is_error_response(result)
@@ -117,7 +140,8 @@ async def test_blocks_drop_operations(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="DROP INDEX my_index"
+        query="DROP INDEX my_index",
+        ctx=DEFAULT_CTX,
     )
 
     assert is_error_response(result)
@@ -130,7 +154,8 @@ async def test_blocks_remove_operations(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MATCH (n) REMOVE n.property RETURN n"
+        query="MATCH (n) REMOVE n.property RETURN n",
+        ctx=DEFAULT_CTX,
     )
 
     assert is_error_response(result)
@@ -155,7 +180,8 @@ async def test_allows_match_return(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MATCH (n:Node) RETURN n.name, n.uuid LIMIT 10"
+        query="MATCH (n:Node) RETURN n.name, n.uuid LIMIT 10",
+        ctx=DEFAULT_CTX,
     )
 
     assert isinstance(result, list)
@@ -178,6 +204,7 @@ async def test_parameterized_query(setup_graphiti_client):
 
     result = await raw_cypher_query(
         query="MATCH (d:Decision) WHERE d.title CONTAINS $search RETURN d.title LIMIT 5",
+        ctx=DEFAULT_CTX,
         params={"search": "Auth"}
     )
 
@@ -201,7 +228,8 @@ async def test_auto_adds_limit_when_missing(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     await raw_cypher_query(
-        query="MATCH (n) RETURN n"
+        query="MATCH (n) RETURN n",
+        ctx=DEFAULT_CTX,
     )
 
     # Check that LIMIT was added to the query
@@ -219,7 +247,8 @@ async def test_respects_existing_limit(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     await raw_cypher_query(
-        query="MATCH (n) RETURN n LIMIT 5"
+        query="MATCH (n) RETURN n LIMIT 5",
+        ctx=DEFAULT_CTX,
     )
 
     # Check that original LIMIT is preserved (no double LIMIT)
@@ -243,6 +272,7 @@ async def test_caps_max_results_at_500(setup_graphiti_client):
 
     result = await raw_cypher_query(
         query="MATCH (n) RETURN n",
+        ctx=DEFAULT_CTX,
         max_results=1000  # Request more than cap
     )
 
@@ -265,6 +295,7 @@ async def test_respects_max_results_param(setup_graphiti_client):
 
     result = await raw_cypher_query(
         query="MATCH (n) RETURN n",
+        ctx=DEFAULT_CTX,
         max_results=10
     )
 
@@ -284,7 +315,8 @@ async def test_handles_query_error(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MATCH (n RETURN n"  # Invalid syntax
+        query="MATCH (n RETURN n",  # Invalid syntax
+        ctx=DEFAULT_CTX,
     )
 
     assert is_error_response(result)
@@ -301,7 +333,8 @@ async def test_handles_none_result(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MATCH (n) RETURN n LIMIT 1"
+        query="MATCH (n) RETURN n LIMIT 1",
+        ctx=DEFAULT_CTX,
     )
 
     assert result == []
@@ -314,7 +347,8 @@ async def test_returns_error_when_client_not_initialized():
         from graphiti_mcp_server import raw_cypher_query
 
         result = await raw_cypher_query(
-            query="MATCH (n) RETURN n"
+            query="MATCH (n) RETURN n",
+            ctx=DEFAULT_CTX,
         )
 
         assert is_error_response(result)
@@ -330,7 +364,8 @@ async def test_blocks_lowercase_create(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="create (n:Node) return n"
+        query="create (n:Node) return n",
+        ctx=DEFAULT_CTX,
     )
 
     assert is_error_response(result)
@@ -343,7 +378,8 @@ async def test_blocks_mixed_case_delete(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MATCH (n) DeLeTe n"
+        query="MATCH (n) DeLeTe n",
+        ctx=DEFAULT_CTX,
     )
 
     assert is_error_response(result)
@@ -367,7 +403,8 @@ async def test_allows_created_at_field(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MATCH (n) RETURN n.name, n.created_at ORDER BY n.created_at LIMIT 10"
+        query="MATCH (n) RETURN n.name, n.created_at ORDER BY n.created_at LIMIT 10",
+        ctx=DEFAULT_CTX,
     )
 
     # Should succeed, not be blocked
@@ -389,7 +426,8 @@ async def test_allows_deleted_flag_field(setup_graphiti_client):
     from graphiti_mcp_server import raw_cypher_query
 
     result = await raw_cypher_query(
-        query="MATCH (n) WHERE n.deleted = false RETURN n.name LIMIT 10"
+        query="MATCH (n) WHERE n.deleted = false RETURN n.name LIMIT 10",
+        ctx=DEFAULT_CTX,
     )
 
     # Should succeed, not be blocked
