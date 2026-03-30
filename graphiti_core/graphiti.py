@@ -375,6 +375,12 @@ class Graphiti:
         """
         if driver is None:
             driver = self.driver
+            # FalkorDB multi-tenant: each group_id has its own graph.
+            # Clone the driver to query the correct graph, same as add_episode/search.
+            if group_ids and len(group_ids) == 1:
+                gid = group_ids[0]
+                if gid and gid != driver._database:
+                    driver = driver.clone(database=gid)
         return await retrieve_episodes(driver, reference_time, last_n, group_ids, source)
 
     async def add_episode(

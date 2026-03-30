@@ -50,13 +50,14 @@ def handle_multiple_group_ids(func: F) -> F:
         if group_ids is None and group_ids_pos is not None and len(args) > group_ids_pos:
             group_ids = args[group_ids_pos]
 
-        # Only handle FalkorDB with multiple group_ids
+        # FalkorDB multi-tenant: each group_id has its own graph.
+        # Must clone the driver for ANY group_id query, not just multi-group.
         if (
             hasattr(self, 'clients')
             and hasattr(self.clients, 'driver')
             and self.clients.driver.provider == GraphProvider.FALKORDB
             and group_ids
-            and len(group_ids) > 1
+            and len(group_ids) >= 1
         ):
             # Execute for each group_id concurrently
             driver = self.clients.driver
