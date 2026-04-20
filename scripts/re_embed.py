@@ -9,7 +9,7 @@ Usage:
     python3 scripts/re_embed.py --dry-run
 
     # Re-embed using local llama.cpp on Darwin:
-    python3 scripts/re_embed.py --base-url http://192.168.4.1:8080/v1
+    python3 scripts/re_embed.py --base-url http://darwin.home:8080/v1
 
     # Re-embed using OpenAI API (for comparison/rollback):
     python3 scripts/re_embed.py --base-url https://api.openai.com/v1 \\
@@ -146,7 +146,7 @@ async def main():
     )
     parser.add_argument(
         '--base-url',
-        default='http://192.168.4.1:8080/v1',
+        default='http://darwin.home:8080/v1',
         help='OpenAI-compatible embedding API base URL',
     )
     parser.add_argument(
