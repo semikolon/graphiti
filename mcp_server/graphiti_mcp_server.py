@@ -25,12 +25,15 @@ from pydantic import BaseModel, Field
 
 from custom_entities import (
     BusinessRule,
+    Commitment,
     Deadline,
     Decision,
     ExternalConstraint,
     Framework,
     Library,
+    Meeting,
     Pattern,
+    Person,
     PolicyDecision,
     ProgrammingLanguage,
     Project,
@@ -174,6 +177,10 @@ ENTITY_TYPES: dict[str, BaseModel] = {
     'Task': Task,  # type: ignore  # Actionable items with status/priority/deps
     'Deadline': Deadline,  # type: ignore  # Temporal constraints (shared deadlines)
     'Routine': Routine,  # type: ignore  # Recurring patterns that generate Tasks
+    # Household / interpersonal entities (Ruby household context)
+    'Person': Person,  # type: ignore  # Humans known to the household
+    'Commitment': Commitment,  # type: ignore  # Interpersonal promises (distinct from Task)
+    'Meeting': Meeting,  # type: ignore  # Bounded conversation episodes (instance, not pattern)
 }
 
 

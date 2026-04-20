@@ -256,3 +256,117 @@ class Routine(BaseModel):
         default=True,
         description="Can be paused without deletion"
     )
+
+
+# --- Household / interpersonal entities (Ruby household context) ---
+
+
+class Person(BaseModel):
+    """A human known to the household — family, housemates, friends, neighbors,
+    landlords, contractors, professionals referenced in conversations.
+
+    Entity name should be the person's primary first name (or nickname) for
+    display, e.g., 'Rasmus', 'Lisa', 'Fredrik', 'Ingrid'. Use 'full_name' to
+    disambiguate when multiple people share a first name.
+
+    Relationships are represented via edges (PROMISED_BY / PROMISED_TO / ATTENDED /
+    LIVES_WITH / WORKS_FOR / etc.) that Graphiti extracts from context. Keep the
+    Person node itself stable; let the graph capture the dynamics.
+    """
+    full_name: str | None = Field(
+        None,
+        description="Full name (first + last) when disambiguation is needed"
+    )
+    role: str | None = Field(
+        None,
+        description="Relationship type: housemate, family, partner, friend, landlord, contractor, professional, neighbor, colleague"
+    )
+    household: bool = Field(
+        default=False,
+        description="True if this person lives in the Sarpetorp household"
+    )
+    notes: str | None = Field(
+        None,
+        description="Stable context: occupation, preferences, shared history (under 300 chars). Avoid ephemeral state."
+    )
+
+
+class Commitment(BaseModel):
+    """An interpersonal promise — something one person said they would do,
+    usually on behalf of or to another person.
+
+    Distinct from Task (personal backlog): a Commitment captures PROVENANCE
+    (who promised whom, when stated, in what channel). 'Fredrik promised to
+    pay Rasmus back by Friday' is a Commitment; 'Pay Rasmus back 500kr' on
+    Fredrik's own list would be a Task fulfilled by that Commitment. They
+    may co-exist — use a FULFILLS edge (Task)-[:FULFILLS]->(Commitment).
+
+    Link Commitments to People via PROMISED_BY and PROMISED_TO edges. Link to
+    the originating Meeting, Email, or Message episode via a MADE_IN edge so
+    the raw context is always one hop away.
+
+    Entity name should describe the commitment concisely.
+    Examples: 'Pay Rasmus 500kr for groceries', 'Fix kitchen tap by weekend',
+              'Send landlord quarterly report', 'Bring hammer Sunday'
+    """
+    status: str = Field(
+        default="open",
+        description="Lifecycle: open, fulfilled, broken, revoked, superseded"
+    )
+    due_at: str | None = Field(
+        None,
+        description="ISO 8601 date or datetime when the commitment is due (e.g. '2026-04-25' or '2026-04-25T17:00:00')"
+    )
+    promised_at: str | None = Field(
+        None,
+        description="ISO 8601 when the commitment was made — the moment of speaking/writing it"
+    )
+    channel: str | None = Field(
+        None,
+        description="How it was communicated: voice_conversation, email, beeper, sms, meeting, written_agreement"
+    )
+    context: str | None = Field(
+        None,
+        description="Stated conditions or caveats that qualify the commitment (under 300 chars)"
+    )
+
+
+class Meeting(BaseModel):
+    """A bounded conversation episode — a house discussion, phone/video call,
+    or in-person meeting. Serves as an anchor for who said what, and when.
+
+    Distinct from Routine (the PATTERN, e.g. 'weekly house sync') — a Meeting
+    is the INSTANCE on a specific date. Distinct from Task — a Meeting is an
+    event that occurred, not work to do. Distinct from a voice conversation
+    with Ruby — those are daemon_conversation Episodes, not Meetings unless
+    other Persons participated.
+
+    Link to Persons via ATTENDED edges. Link to Commitments made during the
+    meeting via MADE_IN edges. The raw transcript typically lives outside the
+    graph (file, audio, email thread); use transcript_ref to point to it and
+    keep the graph lean.
+
+    Entity name should describe the meeting concisely.
+    Examples: 'House sync 2026-04-15', 'Call with landlord re: heating 2026-03-22',
+              'REKO planning dinner 2026-04-10'
+    """
+    date: str = Field(
+        ...,
+        description="ISO 8601 date or datetime when the meeting took place"
+    )
+    participants: list[str] = Field(
+        default_factory=list,
+        description="Names of Persons present (use Person entity names for linkability)"
+    )
+    location: str | None = Field(
+        None,
+        description="Where: living_room, kitchen, atelier, phone_call, video_call, email_thread, chat"
+    )
+    topic: str | None = Field(
+        None,
+        description="Primary topic or purpose (under 200 chars)"
+    )
+    transcript_ref: str | None = Field(
+        None,
+        description="Pointer to the raw source: file path, episode_id, message-thread ID, or email-thread ID. Raw text stays out of the graph."
+    )
