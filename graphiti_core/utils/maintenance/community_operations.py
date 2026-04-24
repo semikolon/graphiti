@@ -239,7 +239,10 @@ async def generate_summary_description(
 
 
 async def build_community(
-    llm_client: LLMClient, community_cluster: list[EntityNode], ensure_ascii: bool = True
+    llm_client: LLMClient,
+    community_cluster: list[EntityNode],
+    ensure_ascii: bool = True,
+    max_coroutines: int | None = None,
 ) -> tuple[CommunityNode, list[CommunityEdge]]:
     summaries = [entity.summary for entity in community_cluster]
     length = len(summaries)
@@ -257,7 +260,8 @@ async def build_community(
                     for left_summary, right_summary in zip(
                         summaries[: int(length / 2)], summaries[int(length / 2) :], strict=False
                     )
-                ]
+                ],
+                max_coroutines=max_coroutines,
             )
         )
         if odd_one_out is not None:
@@ -287,18 +291,36 @@ async def build_communities(
     llm_client: LLMClient,
     group_ids: list[str] | None,
     ensure_ascii: bool = True,
+    max_coroutines: int | None = None,
 ) -> tuple[list[CommunityNode], list[CommunityEdge]]:
+    """Build communities.
+
+    Parameters
+    ----------
+    max_coroutines : int | None, optional
+        Honors the caller's LLM concurrency cap for BOTH the outer cluster-fanout
+        gather AND the inner pairwise-summary gather in build_community.
+        Defaults to fall through to SEMAPHORE_LIMIT env var (via semaphore_gather).
+        Addresses upstream issue #1398 — previously neither layer honored
+        Graphiti.max_coroutines, causing rate-limit bursts on throttled backends.
+    """
     community_clusters = await get_community_clusters(driver, group_ids)
 
-    semaphore = asyncio.Semaphore(MAX_COMMUNITY_BUILD_CONCURRENCY)
+    # Outer concurrency cap — caller's max_coroutines if given, else the module default.
+    outer_limit = max_coroutines if max_coroutines is not None else MAX_COMMUNITY_BUILD_CONCURRENCY
+    semaphore = asyncio.Semaphore(outer_limit)
 
     async def limited_build_community(cluster):
         async with semaphore:
-            return await build_community(llm_client, cluster, ensure_ascii)
+            # Thread max_coroutines into the inner pairwise-summary gather as well.
+            return await build_community(
+                llm_client, cluster, ensure_ascii, max_coroutines=max_coroutines
+            )
 
     communities: list[tuple[CommunityNode, list[CommunityEdge]]] = list(
         await semaphore_gather(
-            *[limited_build_community(cluster) for cluster in community_clusters]
+            *[limited_build_community(cluster) for cluster in community_clusters],
+            max_coroutines=outer_limit,
         )
     )
 
