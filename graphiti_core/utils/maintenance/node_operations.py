@@ -37,6 +37,12 @@ from graphiti_core.search.search import search
 from graphiti_core.search.search_config import SearchResults
 from graphiti_core.search.search_config_recipes import NODE_HYBRID_SEARCH_RRF
 from graphiti_core.search.search_filters import SearchFilters
+from graphiti_core.utils.content_chunking import (
+    chunk_json_content,
+    chunk_message_content,
+    chunk_text_content,
+    should_chunk,
+)
 from graphiti_core.utils.datetime_utils import utc_now
 from graphiti_core.utils.maintenance.edge_operations import filter_existing_duplicate_of_edges
 
@@ -77,6 +83,84 @@ def sanitize_extracted_attributes(
         )
         return {k: v for k, v in extracted.items() if k not in protected_fields}
     return extracted
+
+
+async def _extract_entities_chunked(
+    llm_client: LLMClient,
+    episode: EpisodicNode,
+    previous_episodes: list[EpisodicNode],
+    entity_types_context: list[dict],
+    ensure_ascii: bool,
+) -> list[ExtractedEntity]:
+    """Chunk-aware entity extraction for dense content (PR #1129 wire-in).
+
+    Splits the episode content via the source-appropriate chunker, extracts
+    entities from each chunk in parallel, then deduplicates case-insensitively
+    by name. Reflexion is intentionally skipped — each chunk is small enough
+    that single-pass extraction is reliable.
+    """
+    # Select the source-appropriate chunker
+    if episode.source == EpisodeType.message:
+        chunks = chunk_message_content(episode.content)
+        extract_prompt_fn = prompt_library.extract_nodes.extract_message
+    elif episode.source == EpisodeType.json:
+        chunks = chunk_json_content(episode.content)
+        extract_prompt_fn = prompt_library.extract_nodes.extract_json
+    else:
+        chunks = chunk_text_content(episode.content)
+        extract_prompt_fn = prompt_library.extract_nodes.extract_text
+
+    if not chunks:
+        # Degenerate: chunker returned nothing. Fall back to treating
+        # the whole content as one chunk to preserve semantics.
+        chunks = [episode.content]
+
+    logger.debug(
+        f'Chunked episode into {len(chunks)} chunks ({episode.source.name}); '
+        f'extracting entities in parallel'
+    )
+
+    async def extract_one_chunk(chunk_text: str) -> list[ExtractedEntity]:
+        context = {
+            'episode_content': chunk_text,
+            'episode_timestamp': episode.valid_at.isoformat(),
+            'previous_episodes': [ep.content for ep in previous_episodes],
+            'custom_prompt': '',
+            'entity_types': entity_types_context,
+            'source_description': episode.source_description,
+            'ensure_ascii': ensure_ascii,
+        }
+        llm_response = await llm_client.generate_response(
+            extract_prompt_fn(context),
+            response_model=ExtractedEntities,
+        )
+        response_obj = ExtractedEntities(**llm_response)
+        return response_obj.extracted_entities
+
+    # Parallel extraction, bounded by semaphore_gather's default concurrency.
+    # Individual chunk failures propagate — worth improving with per-chunk
+    # error recovery in a follow-up, but matching upstream #1129 semantics.
+    per_chunk_entities: list[list[ExtractedEntity]] = await semaphore_gather(
+        *[extract_one_chunk(c) for c in chunks]
+    )
+
+    # Merge + case-insensitive dedup by name. First occurrence wins on
+    # entity_type_id (consistent with upstream #1129's cross-chunk dedup).
+    seen_names: set[str] = set()
+    merged: list[ExtractedEntity] = []
+    for chunk_entities in per_chunk_entities:
+        for entity in chunk_entities:
+            name_key = (entity.name or '').strip().lower()
+            if not name_key or name_key in seen_names:
+                continue
+            seen_names.add(name_key)
+            merged.append(entity)
+
+    logger.debug(
+        f'Chunked extraction: {sum(len(c) for c in per_chunk_entities)} raw entities → '
+        f'{len(merged)} after cross-chunk dedup'
+    )
+    return merged
 
 
 async def extract_nodes_reflexion(
@@ -137,50 +221,68 @@ async def extract_nodes(
         else []
     )
 
-    context = {
-        'episode_content': episode.content,
-        'episode_timestamp': episode.valid_at.isoformat(),
-        'previous_episodes': [ep.content for ep in previous_episodes],
-        'custom_prompt': custom_prompt,
-        'entity_types': entity_types_context,
-        'source_description': episode.source_description,
-        'ensure_ascii': clients.ensure_ascii,
-    }
+    # Adaptive chunking wire-in (upstream PR #1129, ported Apr 24).
+    # should_chunk() only returns True for high-density content >= CHUNK_MIN_TOKENS.
+    # 95%+ of our target ingestion (ChatGPT/Claude prose conversations) flows the
+    # existing reflexion path unchanged — no regression for typical content.
+    # Dense structured inputs (bulk-data JSON, AWS cost logs, entity-rich text)
+    # take the chunked path which bypasses reflexion in favor of parallel
+    # per-chunk extraction + case-insensitive cross-chunk dedup.
+    if should_chunk(episode.content, episode.source):
+        extracted_entities = await _extract_entities_chunked(
+            llm_client=llm_client,
+            episode=episode,
+            previous_episodes=previous_episodes,
+            entity_types_context=entity_types_context,
+            ensure_ascii=clients.ensure_ascii,
+        )
+    else:
+        context = {
+            'episode_content': episode.content,
+            'episode_timestamp': episode.valid_at.isoformat(),
+            'previous_episodes': [ep.content for ep in previous_episodes],
+            'custom_prompt': custom_prompt,
+            'entity_types': entity_types_context,
+            'source_description': episode.source_description,
+            'ensure_ascii': clients.ensure_ascii,
+        }
 
-    while entities_missed and reflexion_iterations <= MAX_REFLEXION_ITERATIONS:
-        if episode.source == EpisodeType.message:
-            llm_response = await llm_client.generate_response(
-                prompt_library.extract_nodes.extract_message(context),
-                response_model=ExtractedEntities,
-            )
-        elif episode.source == EpisodeType.text:
-            llm_response = await llm_client.generate_response(
-                prompt_library.extract_nodes.extract_text(context), response_model=ExtractedEntities
-            )
-        elif episode.source == EpisodeType.json:
-            llm_response = await llm_client.generate_response(
-                prompt_library.extract_nodes.extract_json(context), response_model=ExtractedEntities
-            )
+        while entities_missed and reflexion_iterations <= MAX_REFLEXION_ITERATIONS:
+            if episode.source == EpisodeType.message:
+                llm_response = await llm_client.generate_response(
+                    prompt_library.extract_nodes.extract_message(context),
+                    response_model=ExtractedEntities,
+                )
+            elif episode.source == EpisodeType.text:
+                llm_response = await llm_client.generate_response(
+                    prompt_library.extract_nodes.extract_text(context),
+                    response_model=ExtractedEntities,
+                )
+            elif episode.source == EpisodeType.json:
+                llm_response = await llm_client.generate_response(
+                    prompt_library.extract_nodes.extract_json(context),
+                    response_model=ExtractedEntities,
+                )
 
-        response_object = ExtractedEntities(**llm_response)
+            response_object = ExtractedEntities(**llm_response)
 
-        extracted_entities: list[ExtractedEntity] = response_object.extracted_entities
+            extracted_entities = response_object.extracted_entities
 
-        reflexion_iterations += 1
-        if reflexion_iterations < MAX_REFLEXION_ITERATIONS:
-            missing_entities = await extract_nodes_reflexion(
-                llm_client,
-                episode,
-                previous_episodes,
-                [entity.name for entity in extracted_entities],
-                clients.ensure_ascii,
-            )
+            reflexion_iterations += 1
+            if reflexion_iterations < MAX_REFLEXION_ITERATIONS:
+                missing_entities = await extract_nodes_reflexion(
+                    llm_client,
+                    episode,
+                    previous_episodes,
+                    [entity.name for entity in extracted_entities],
+                    clients.ensure_ascii,
+                )
 
-            entities_missed = len(missing_entities) != 0
+                entities_missed = len(missing_entities) != 0
 
-            custom_prompt = 'Make sure that the following entities are extracted: '
-            for entity in missing_entities:
-                custom_prompt += f'\n{entity},'
+                custom_prompt = 'Make sure that the following entities are extracted: '
+                for entity in missing_entities:
+                    custom_prompt += f'\n{entity},'
 
     filtered_extracted_entities = [entity for entity in extracted_entities if entity.name.strip()]
     end = time()
