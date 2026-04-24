@@ -251,17 +251,21 @@ async def resolve_extracted_nodes(
 
     existing_nodes: list[EntityNode] = list(existing_nodes_dict.values())
 
+    # Port of upstream PR #1276 (dedup scaling fix, CLA-blocked).
+    # Drop candidate.attributes from the resolution context — only name + entity_types
+    # are needed for identity-level dedup. Attributes (summaries, descriptions) add
+    # thousands of tokens that can push the prompt past max_tokens as graph grows.
+    # Cap at MAX_RESOLVE_CANDIDATES = 50 as a hard ceiling. See issue #1275.
+    MAX_RESOLVE_CANDIDATES = 50
     existing_nodes_context = (
         [
             {
-                **{
-                    'idx': i,
-                    'name': candidate.name,
-                    'entity_types': candidate.labels,
-                },
-                **candidate.attributes,
+                'idx': i,
+                'name': candidate.name,
+                'entity_types': candidate.labels,
+                # candidate.attributes intentionally omitted — see comment above.
             }
-            for i, candidate in enumerate(existing_nodes)
+            for i, candidate in enumerate(existing_nodes[:MAX_RESOLVE_CANDIDATES])
         ],
     )
 
