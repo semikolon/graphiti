@@ -142,3 +142,19 @@ When working with the MCP server, follow the patterns established in `mcp_server
 - Use specific entity type filters (`Preference`, `Procedure`, `Requirement`)
 - Store new information immediately using `add_memory`
 - Follow discovered procedures and respect established preferences
+
+### Custom Cypher Tools (fork additions)
+
+The fork adds two Cypher-level tools beyond standard MCP — choose by intent, not convenience:
+
+- **`raw_cypher_query`** (read-only, fenced): Arbitrary read traversal. Blocks ALL writes (CREATE/DELETE/SET/MERGE/REMOVE/DETACH/DROP). Use for graph exploration, complex MATCH patterns beyond `search_nodes`/`search_facts`.
+- **`cypher_query_write`** (write-capable, May 5 2026, after `raw_cypher_query` at `mcp_server/graphiti_mcp_server.py:1972`): Allows CREATE/SET/MERGE/DELETE/REMOVE/DETACH. **Blocks DROP only** (case-insensitive, word-boundary regex). Group-scoped via `driver.clone(database=group_id)`. Auto-adds LIMIT to RETURN clauses. Audit-logged via `logger.info`. 19 tests in `test_cypher_query_write.py`. Use for **structured CRUD on known schema** where LLM extraction is overhead — direct entity create/update/delete by callers that already know the shape.
+
+### When to use `add_memory` vs `cypher_query_write`
+
+- **`add_memory`** — natural-language episode capture where LLM entity extraction earns its cost. Goes through full pipeline: extraction → reflexion → dedup → edge resolution → attribute extraction → bulk write. ~5-7 minutes per episode on populated graphs (per global CLAUDE.md § Knowledge Infrastructure Reliability). Right for free-form conversations, ambient ingestion, anywhere you want the graph to get richer through the LLM's interpretation.
+- **`cypher_query_write`** — structured CRUD on known schema. Skips LLM extraction entirely. Right for systems that already know the entity shape (e.g., Fyr's `master-todo-system` doing Task CRUD via the new tool — see `~/Projects/fyr/.claude/specs/master-todo-system/design.md`). Sub-second latency; same per-episode entity_edges count would otherwise pay the full LLM-pipeline cost.
+
+### Custom Entity Schema Updates
+
+- **Task** (May 5 2026, commit `2758264`): Gained `external_source` + `external_id` Optional fields after `context`. Carries provenance for tasks scanned from external systems (TickTick/Workflowy/Keep/todomd) so re-scans can re-find the same task across runs. 7 Pydantic round-trip tests verify schema. Source: `mcp_server/custom_entities.py:164-220`.
