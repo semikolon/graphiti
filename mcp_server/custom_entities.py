@@ -207,6 +207,14 @@ class Task(BaseModel):
         None,
         description="GTD-style context: at_computer, errands, phone_call, or free-form"
     )
+    external_source: str | None = Field(
+        None,
+        description="Connector name if scanned from an external system: 'ticktick', 'workflowy', 'keep', 'todomd'. None for Fyr-native tasks. Added 2026-05-05 per master-todo-system v1 spec (~/Projects/fyr/.claude/specs/master-todo-system/)."
+    )
+    external_id: str | None = Field(
+        None,
+        description="Stable identifier from the external source for re-finding the same task across scans. Examples: TickTick task UUID; Workflowy node ID; Keep '<note_id>:<item_id>'; TODO.md '<filepath>:<linenum>'. Added 2026-05-05."
+    )
 
 
 class Deadline(BaseModel):
