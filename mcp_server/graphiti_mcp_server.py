@@ -1970,6 +1970,135 @@ async def raw_cypher_query(
 
 
 @mcp.tool()
+async def cypher_query_write(
+    query: str,
+    ctx: Context,
+    params: dict[str, Any] | None = None,
+    max_results: int = 50,
+) -> list[dict[str, Any]] | ErrorResponse:
+    """Execute a write-capable Cypher query against the user's group-scoped graph.
+
+    Companion to raw_cypher_query — allows CREATE / DELETE / SET / MERGE /
+    REMOVE / DETACH DELETE while still preventing catastrophic operations
+    (DROP). Use for high-frequency programmatic CRUD where add_memory's
+    LLM-extraction is overkill — e.g., the master-todo-system kanban
+    (Fyr Tauri app, May 2026): known schema, structural CRUD, no LLM needed.
+
+    Args:
+        query: Valid Cypher query string. May include write operations.
+        params: Optional query parameters for parameterized queries (prevents injection).
+        max_results: Maximum result rows from RETURN clause (default 50, max 500).
+
+    Returns:
+        List of result dictionaries matching the RETURN clause (often the uuid
+        of the created or updated node). Empty list if the query returns no rows.
+
+    Safety:
+        - Catastrophic ops blocked: DROP (database / graph / index level).
+          For full graph wipe use the dedicated `clear_graph` tool instead.
+        - Group_id scoping: query targets ONLY the calling user's graph
+          (driver.clone(database=group_id) — same pattern as raw_cypher_query).
+          Cross-user damage is not possible without DROP-level ops.
+        - Parameterized queries strongly encouraged for injection-safety.
+        - LIMIT is auto-added to RETURN clauses if missing (caps memory).
+
+    Trade-off vs add_memory:
+        - cypher_query_write: deterministic, fast, no LLM/quota dependency,
+          but bypasses entity extraction + embedding generation. Tasks created
+          via this path will NOT be findable via semantic-similarity search
+          (no name_embedding). Use for structured CRUD on known schemas.
+        - add_memory: full LLM ingestion (extraction + embedding + dedup),
+          slower, quota-bound, but enriches the graph with relationships and
+          enables semantic search. Use for natural-language episodes where the
+          extraction layer's intelligence is the value.
+
+    Example (CREATE a Task entity for the master-todo-system kanban):
+        cypher_query_write(
+            query=(
+                "CREATE (n:Entity:Task {"
+                "  uuid: $uuid, name: $title, group_id: $gid,"
+                "  status: 'open', domain: $dom, created_at: $ts"
+                "}) RETURN n.uuid AS uuid"
+            ),
+            params={"uuid": "abc...", "title": "Buy milk", "gid": "fyr-fredrik",
+                    "dom": "HOUSE", "ts": 1730000000000}
+        )
+
+    Example (UPDATE status, idempotent):
+        cypher_query_write(
+            query=(
+                "MATCH (n:Task {uuid: $uuid, group_id: $gid}) "
+                "SET n.status = $status RETURN n.uuid AS uuid"
+            ),
+            params={"uuid": "abc...", "gid": "fyr-fredrik", "status": "done"}
+        )
+    """
+    global graphiti_client
+
+    if graphiti_client is None:
+        return ErrorResponse(error='Graphiti client not initialized')
+
+    # Block CATASTROPHIC operations only — writes (CREATE/DELETE/SET/MERGE/REMOVE/
+    # DETACH DELETE) are explicitly allowed. DROP wipes a graph or database and
+    # is reachable via clear_graph as a dedicated tool with stronger semantics.
+    query_upper = query.upper()
+    catastrophic_keywords = [
+        (r'\bDROP\b', 'DROP'),
+    ]
+    for pattern, keyword in catastrophic_keywords:
+        if re.search(pattern, query_upper):
+            return ErrorResponse(
+                error=(
+                    f'Catastrophic operation not allowed in cypher_query_write: {keyword}. '
+                    f'For full graph wipe use the dedicated clear_graph tool.'
+                )
+            )
+
+    # Cap max_results
+    max_results = min(max_results, 500)
+
+    # Auto-add LIMIT to RETURN clauses (writes commonly RETURN 1 row,
+    # but bulk operations may RETURN many — cap them).
+    if 'LIMIT' not in query_upper and 'RETURN' in query_upper:
+        query = f'{query} LIMIT {max_results}'
+
+    try:
+        client = cast(Graphiti, graphiti_client)
+
+        # Per-group scoping: clone driver to target the user's named FalkorDB graph
+        group_id = get_effective_group_id(ctx)
+        driver = client.driver.clone(database=group_id)
+
+        # Audit log: writes are observable in journalctl for incident review
+        logger.info(
+            f'cypher_query_write executing on group_id={group_id}: {query[:200]}'
+        )
+
+        if params is None:
+            params = {}
+
+        result = await driver.execute_query(query, **params)
+
+        if result is None:
+            return []
+
+        records, header, _ = result
+
+        # Truncate to max_results (mirror raw_cypher_query behavior)
+        if len(records) > max_results:
+            records = records[:max_results]
+
+        return records
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(
+            f'Error executing cypher_query_write: {error_msg}\nQuery: {query}'
+        )
+        return ErrorResponse(error=f'Cypher query error: {error_msg}')
+
+
+@mcp.tool()
 async def get_queue_status() -> SuccessResponse:
     """Check episode processing queue health.
 
