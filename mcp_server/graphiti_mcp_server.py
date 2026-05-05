@@ -1974,7 +1974,7 @@ async def cypher_query_write(
     query: str,
     ctx: Context,
     params: dict[str, Any] | None = None,
-    max_results: int = 50,
+    max_results: int = 10000,
 ) -> list[dict[str, Any]] | ErrorResponse:
     """Execute a write-capable Cypher query against the user's group-scoped graph.
 
@@ -2054,8 +2054,17 @@ async def cypher_query_write(
                 )
             )
 
-    # Cap max_results
-    max_results = min(max_results, 500)
+    # Cap max_results.
+    # Was 500 originally — bumped to 10000 (May 5, 2026) because Fyr's
+    # master-todo-system listTasks query needs to fetch the full set of
+    # existing Tasks (per external_source) to do its diff correctly. With
+    # the 500 cap, scans of >500 tasks per source created duplicates on
+    # every rescan because list_tasks returned only 500 of N existing,
+    # and the diff classified the missing N-500 as "not in graph → CREATE
+    # new". 10000 covers realistic personal-task sets for years; if a
+    # future workload needs more, paginate via SKIP/LIMIT instead of
+    # bumping again.
+    max_results = min(max_results, 10000)
 
     # Auto-add LIMIT to RETURN clauses (writes commonly RETURN 1 row,
     # but bulk operations may RETURN many — cap them).
