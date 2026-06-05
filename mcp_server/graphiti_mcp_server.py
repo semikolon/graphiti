@@ -1858,7 +1858,7 @@ async def clear_graph(ctx: Context) -> SuccessResponse | ErrorResponse:
 @mcp.tool()
 async def get_recent_errors(
     since_minutes: int = 60,
-    error_type: str | None = None,
+    error_type: str = "",
 ) -> list[dict[str, Any]]:
     """Get recent Graphiti processing errors.
 
@@ -1867,12 +1867,20 @@ async def get_recent_errors(
 
     Args:
         since_minutes: Return errors from last N minutes (default: 60)
-        error_type: Optional filter by type: "episode_processing", "search", "connection"
+        error_type: Optional filter by type. Empty string ("", the default) means
+            "no filter, return all error types". Set to e.g. "episode_processing",
+            "search", or "connection" to filter. Empty-string sentinel chosen over
+            `str | None` because FastMCP's JSON-Schema layer rejects nullable
+            optionals with -32602 InvalidParams (see docs/mcp_get_recent_errors_
+            invalid_params_2026_06_04.md for the bug detail).
 
     Returns:
         List of error records with timestamp, episode_name, group_id, error_message, error_type
     """
-    return get_recent_errors_list(since_minutes=since_minutes, error_type=error_type)
+    return get_recent_errors_list(
+        since_minutes=since_minutes,
+        error_type=error_type or None,  # empty string → None for backend filter logic
+    )
 
 
 @mcp.tool()
