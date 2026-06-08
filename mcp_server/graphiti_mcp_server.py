@@ -43,7 +43,12 @@ from custom_entities import (
     Topic,
     WorkflowChoice,
 )
-from notifications import get_recent_errors_list, notify_episode_failure, record_error
+from notifications import (
+    classify_processing_error,
+    get_recent_errors_list,
+    notify_episode_failure,
+    record_error,
+)
 from graphiti_core import Graphiti
 from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.edges import EntityEdge
@@ -879,6 +884,7 @@ async def process_episode_queue(group_id: str):
                 await process_func()
             except Exception as e:
                 error_msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+                error_msg = classify_processing_error(e, error_msg)
                 logger.error(f'Error processing queued episode for group_id {group_id}: {error_msg}')
                 record_error("episode_processing", error_msg, group_id=group_id)
             finally:
@@ -1040,6 +1046,9 @@ async def add_memory(
             except Exception as e:
                 # str(e) is empty for some exceptions (e.g. asyncio.TimeoutError)
                 error_msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+                # Disambiguate insufficient_quota (out of credit) from a real
+                # transient rate limit — both arrive as a 429 / RateLimitError.
+                error_msg = classify_processing_error(e, error_msg)
                 logger.error(
                     f"Error processing episode '{name}' for group_id {group_id_str}: {error_msg}"
                 )

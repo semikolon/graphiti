@@ -108,27 +108,102 @@ def record_error(
     return error
 
 
+# OpenAI (and other providers) return HTTP 429 for BOTH a transient rate limit
+# AND insufficient_quota (out of credit / a billing problem). graphiti_core
+# wraps both as the generic RateLimitError("Rate limit exceeded …"), so the
+# operator cannot tell "wait and retry" from "retrying will never work, the
+# account is out of money". These markers (from the raw provider error, which
+# graphiti chains via `raise RateLimitError from e`) disambiguate.
+_QUOTA_MARKERS = (
+    "insufficient_quota",
+    "exceeded your current quota",
+    "check your plan and billing",
+)
+
+
+def _walk_exception_chain(exc: BaseException):
+    """Yield exc and its __cause__/__context__ chain (cycle-safe)."""
+    seen: set[int] = set()
+    cur: Optional[BaseException] = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        yield cur
+        cur = cur.__cause__ or cur.__context__
+
+
+def classify_processing_error(exc: BaseException, base_msg: str) -> str:
+    """Relabel the insufficient-quota case so it is not mistaken for a transient
+    rate limit. Walks the wrapped cause chain for the raw provider quota markers
+    and, if found, prefixes a clear billing message. Otherwise returns base_msg
+    unchanged (a real rate limit / other error stays as-is)."""
+    for e in _walk_exception_chain(exc):
+        parts = (
+            getattr(e, "code", None),
+            getattr(e, "type", None),
+            getattr(e, "body", None),
+            str(e),
+        )
+        hay = " ".join(str(p) for p in parts if p is not None).lower()
+        if any(m in hay for m in _QUOTA_MARKERS):
+            return (
+                "InsufficientQuotaError (LLM provider quota/billing exhausted — "
+                "this arrives as a 429 but retrying will NOT help; top up credit "
+                f"or switch provider). Underlying: {base_msg}"
+            )
+    return base_msg
+
+
 def get_recent_errors_list(
     since_minutes: int = 60,
     error_type: Optional[str] = None,
 ) -> list[dict]:
     """
-    Get recent errors from the accumulator.
+    Get recent errors, merging the in-memory accumulator with the persisted
+    JSONL (ERROR_LOG_PATH). The JSONL is the durable source — without reading it
+    here, a daemon restart silently empties the in-memory deque and this tool
+    returns [] even though errors are on disk (the original bug). De-dupes on
+    (timestamp, episode_name, error_message), filters by window + type, sorts.
 
     Args:
         since_minutes: Return errors from last N minutes
         error_type: Optional filter by type
 
     Returns:
-        List of error dicts
+        List of error dicts, oldest first
     """
     cutoff = datetime.now() - timedelta(minutes=since_minutes)
-    errors = [
-        e for e in recent_errors
-        if e.timestamp >= cutoff
-        and (error_type is None or e.error_type == error_type)
-    ]
-    return [e.to_dict() for e in errors]
+    merged: dict[tuple, dict] = {}
+
+    def _consider(d: dict, ts: datetime) -> None:
+        if ts < cutoff:
+            return
+        if error_type is not None and d.get("error_type") != error_type:
+            return
+        key = (d.get("timestamp"), d.get("episode_name", ""), d.get("error_message", ""))
+        merged[key] = d
+
+    # Durable JSONL first (survives restarts).
+    try:
+        if os.path.exists(ERROR_LOG_PATH):
+            with open(ERROR_LOG_PATH) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        d = json.loads(line)
+                        ts = datetime.fromisoformat(d["timestamp"])
+                    except (json.JSONDecodeError, KeyError, ValueError):
+                        continue
+                    _consider(d, ts)
+    except Exception as e:
+        logger.warning(f"Failed to read {ERROR_LOG_PATH}: {e}")
+
+    # In-memory deque (current process — catches anything not yet on disk).
+    for e in recent_errors:
+        _consider(e.to_dict(), e.timestamp)
+
+    return sorted(merged.values(), key=lambda d: d.get("timestamp", ""))
 
 
 # =============================================================================
