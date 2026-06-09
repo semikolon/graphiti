@@ -112,6 +112,15 @@ we are missing:
    attribute-hallucination guards (#1498) + `cap_string_attributes`, but requires reconciling this fork's
    `graphiti_core/` reliability patches against upstream first.
 
+**Validated live 2026-06-09** (Darwin daemon code, real LLM + FalkorDB, throwaway group = all first-time
+edges → exercises the #1242 fix): a finance episode produced **7/7 edges with populated attributes** —
+`MonetaryObligation {amount:32377, currency:'SEK', due_date:2026-04-30, recurring_amount:519}`,
+`TemporalDeadline {due_date:2026-05-04, status:'passed'}` (status correctly inferred),
+`MonetaryTransfer {amount:2607, currency:'SEK', direction:'inbound'}` (direction correctly inferred).
+Known characteristic (not a regression): graphiti emits one edge per fact-sentence, so a single debt can
+yield several `MonetaryObligation` edges each carrying the full attributes — queryable, and dedup
+consolidates on re-ingestion. A consumer querying by amount/creditor should expect to dedupe.
+
 ## Cross-references
 
 - Consumer-side design (the finance edge ontology + ledger-vs-projection boundary):
