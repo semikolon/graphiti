@@ -7,7 +7,7 @@ requires-python = ">=3.10,<4"
 dependencies = [
     "mcp>=1.27.2",
     "openai>=1.68.2",
-    "graphiti-core",
+    "graphiti-core[falkordb]",
     "azure-identity>=1.21.0",
 ]
 
