@@ -1236,7 +1236,7 @@ async def search_nodes(
         effective_group_ids = [effective_group_id]
 
         # Configure the search
-        if center_node_uuid is not None:
+        if center_node_uuid:
             search_config = NODE_HYBRID_SEARCH_NODE_DISTANCE.model_copy(deep=True)
         else:
             search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
@@ -1316,7 +1316,7 @@ async def search_global_nodes(
         effective_group_ids = ["default"]
 
         # Configure the search
-        if center_node_uuid is not None:
+        if center_node_uuid:
             search_config = NODE_HYBRID_SEARCH_NODE_DISTANCE.model_copy(deep=True)
         else:
             search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
@@ -1506,7 +1506,7 @@ async def search_cross_project_nodes(
         effective_group_ids = projects
 
         # Configure the search
-        if center_node_uuid is not None:
+        if center_node_uuid:
             search_config = NODE_HYBRID_SEARCH_NODE_DISTANCE.model_copy(deep=True)
         else:
             search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
