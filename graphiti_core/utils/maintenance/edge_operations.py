@@ -386,7 +386,12 @@ async def resolve_extracted_edge(
     edge_types: dict[str, type[BaseModel]] | None = None,
     ensure_ascii: bool = True,
 ) -> tuple[EntityEdge, list[EntityEdge], list[EntityEdge]]:
-    if len(related_edges) == 0 and len(existing_edges) == 0:
+    # First-time edges (no related/existing edges) still need edge-type classification
+    # + attribute extraction when an edge ontology applies — otherwise the *first* edge
+    # of a brand-new relationship gets attributes={} (upstream bug #1111, fixed in #1242).
+    # Only keep the dedup-skip fast path when there are no applicable edge types, so all
+    # existing non-custom-edge usage is unaffected.
+    if len(related_edges) == 0 and len(existing_edges) == 0 and not edge_types:
         return extracted_edge, [], []
 
     start = time()

@@ -189,6 +189,94 @@ ENTITY_TYPES: dict[str, BaseModel] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Custom EDGE types — structured relationship attributes.
+#
+# Like ENTITY_TYPES, these are GENERIC and applied globally when
+# use_custom_entities is enabled. An edge only populates these attributes when a
+# fact actually carries the matching shape (a sum of money, a due date);
+# otherwise it stays a generic relation with empty attributes — so non-finance
+# graphs are unaffected. The finance use case (din-mamma) is the motivating
+# consumer but nothing here is finance-only.
+#
+# Without these, every edge's `attributes` is {} and numbers/dates survive only
+# as free text inside the fact string (not graph-queryable). See
+# docs/edge_types_attribute_gap_2026_06_09.md. Amounts/dates extracted by the
+# LLM are a queryable PROJECTION, never an authoritative ledger value.
+# ---------------------------------------------------------------------------
+
+
+class MonetaryObligation(BaseModel):
+    """A debt, bill, invoice, fee, or recurring charge that one party owes or must pay another.
+
+    Use when a fact states that someone owes, is billed, is charged, or must pay a sum of
+    money: invoices, debts, inkasso claims, taxes due, subscription/membership fees.
+
+    Extraction instructions:
+    1. Only create this edge when the fact explicitly involves a sum of money owed or payable.
+    2. Record amount as a number only — strip currency symbols and thousands separators.
+    3. If a recurring/monthly amount is stated alongside a total, also set recurring_amount.
+    4. Use the date payment is DUE (not the issue/invoice date) for due_date.
+    5. Leave any field None if the fact does not state it — never guess.
+    """
+
+    amount: float | None = Field(default=None, description='Total sum owed or payable, as a number (e.g. 32377.0). No currency symbol or separators.')
+    currency: str | None = Field(default=None, description="Short currency code, e.g. 'SEK', 'EUR'.")
+    due_date: datetime | None = Field(default=None, description='When payment is due.')
+    recurring_amount: float | None = Field(default=None, description='Per-period amount if this is a recurring charge (e.g. 519.0 per month).')
+    ocr: str | None = Field(default=None, description='Payment reference / OCR number, if stated.')
+
+
+class MonetaryTransfer(BaseModel):
+    """A one-off movement of money: a refund, payout, incentive, or single payment.
+
+    Use for a discrete sum that moves once (a tax refund, a survey incentive, a single
+    payment), as opposed to an ongoing obligation (use MonetaryObligation for debts/bills).
+
+    Extraction instructions:
+    1. Only create this edge when the fact describes a specific sum moving once.
+    2. amount is a number only (no currency symbol or separators).
+    3. direction is from the subject's perspective: 'inbound' (money received) or 'outbound' (money paid).
+    4. Set taxable only if the fact explicitly states tax status.
+    5. Leave any field None if not stated.
+    """
+
+    amount: float | None = Field(default=None, description='The sum transferred, as a number.')
+    currency: str | None = Field(default=None, description="Short currency code, e.g. 'SEK'.")
+    direction: str | None = Field(default=None, description="'inbound' (received) or 'outbound' (paid), from the subject's perspective.")
+    taxable: bool | None = Field(default=None, description='Whether the transfer is taxable — only if explicitly stated.')
+
+
+class TemporalDeadline(BaseModel):
+    """A due date or deadline that one party sets for another (filing dates, response deadlines).
+
+    Use when a fact states a concrete deadline or due date for an action (a tax-return filing
+    date, a dispute/bestrida deadline, a respond-by date).
+
+    Extraction instructions:
+    1. Only create this edge when the fact states a concrete deadline date.
+    2. status is the deadline's state relative to the episode reference time: 'upcoming', 'passed', or 'met' — only if determinable from the fact.
+    3. Leave fields None if not stated.
+    """
+
+    due_date: datetime | None = Field(default=None, description='The deadline / due date.')
+    status: str | None = Field(default=None, description="'upcoming', 'passed', or 'met' if determinable from the fact, else None.")
+
+
+EDGE_TYPES: dict[str, BaseModel] = {
+    'MonetaryObligation': MonetaryObligation,  # type: ignore
+    'MonetaryTransfer': MonetaryTransfer,  # type: ignore
+    'TemporalDeadline': TemporalDeadline,  # type: ignore
+}
+
+# Generic wildcard: allow the typed edges between any entity pair. They only
+# populate when a fact carries the matching shape; otherwise the edge stays a
+# generic relation. ('Entity', 'Entity') is graphiti's any-pair key.
+EDGE_TYPE_MAP: dict[tuple[str, str], list[str]] = {
+    ('Entity', 'Entity'): ['MonetaryObligation', 'MonetaryTransfer', 'TemporalDeadline'],
+}
+
+
 # Type definitions for API responses
 class ErrorResponse(TypedDict):
     error: str
@@ -1027,6 +1115,8 @@ async def add_memory(
                 logger.info(f"Processing queued episode '{name}' for group_id: {group_id_str}")
                 # Use all entity types if use_custom_entities is enabled, otherwise use empty dict
                 entity_types = ENTITY_TYPES if config.use_custom_entities else {}
+                edge_types = EDGE_TYPES if config.use_custom_entities else {}
+                edge_type_map = EDGE_TYPE_MAP if config.use_custom_entities else {}
 
                 # No inner timeout — the outer process_episode_queue timeout handles hung calls.
                 # Inner timeouts swallow errors and lose episodes silently.
@@ -1041,6 +1131,8 @@ async def add_memory(
                     uuid=uuid or None,
                     reference_time=effective_reference_time,
                     entity_types=entity_types,
+                    edge_types=edge_types,
+                    edge_type_map=edge_type_map,
                 )
                 logger.info(f"Episode '{name}' processed successfully")
             except Exception as e:
@@ -1162,6 +1254,8 @@ async def add_global_memory(
                 logger.info(f"Processing queued episode '{name}' for GLOBAL group_id: {group_id_str}")
                 # Use all entity types if use_custom_entities is enabled, otherwise use empty dict
                 entity_types = ENTITY_TYPES if config.use_custom_entities else {}
+                edge_types = EDGE_TYPES if config.use_custom_entities else {}
+                edge_type_map = EDGE_TYPE_MAP if config.use_custom_entities else {}
 
                 await client.add_episode(
                     name=name,
@@ -1172,6 +1266,8 @@ async def add_global_memory(
                     uuid=uuid or None,
                     reference_time=effective_reference_time,
                     entity_types=entity_types,
+                    edge_types=edge_types,
+                    edge_type_map=edge_type_map,
                 )
                 logger.info(f"Global episode '{name}' added successfully")
             except Exception as e:

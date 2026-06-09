@@ -1,10 +1,13 @@
 # Structured edge attributes: the fork doesn't wire `edge_types` (use-existing, not build)
 
 **Date**: 2026-06-09
-**Status**: Improvement opportunity (documented, not yet implemented)
-**Severity**: Functional limitation — every edge this fork's MCP server writes has `attributes == {}`; all
-structured data (amounts, dates, OCR numbers) survives only as free-text inside the `.fact` string,
-so it cannot be queried/filtered structurally.
+**Status**: ✅ **Implemented 2026-06-09** — recommendation 1 (generic edge ontology wired into the MCP
+server) + the first-time-edge attribute bug (#1111/#1242) fixed surgically. Recommendation 2 (the full
+graphiti-core 0.20.1 → 0.29.x upgrade) remains a separate deferred project. The analysis below is retained
+as the rationale; see "Implementation (shipped)" at the end.
+**Severity**: Functional limitation (now fixed) — every edge this fork's MCP server wrote had
+`attributes == {}`; all structured data (amounts, dates, OCR numbers) survived only as free-text inside the
+`.fact` string, so it could not be queried/filtered structurally.
 
 ## Observation
 
@@ -88,6 +91,26 @@ we are missing:
    `apply_capped_attributes`), not deterministic parsing. A consumer needing exact financial values keeps
    its own deterministic parse as the source of truth and treats Graphiti edge attributes as the queryable
    *projection*, not the authoritative ledger.
+
+## Implementation (shipped 2026-06-09)
+
+1. **Generic edge ontology in the MCP server** (`graphiti_mcp_server.py`): `MonetaryObligation`
+   (`amount`/`currency`/`due_date`/`recurring_amount`/`ocr`), `MonetaryTransfer`
+   (`amount`/`currency`/`direction`/`taxable`), `TemporalDeadline` (`due_date`/`status`) → `EDGE_TYPES`
+   + a wildcard `EDGE_TYPE_MAP {('Entity','Entity'): [...]}`. Generic + global, symmetric with
+   `ENTITY_TYPES`, gated by `use_custom_entities`; both `add_episode` call sites now pass
+   `edge_types=` + `edge_type_map=`. Non-finance graphs are unaffected — an edge only populates these
+   when a fact actually carries a sum/date, otherwise it stays a generic relation with `{}`.
+2. **First-time-edge fix back-ported** (`graphiti_core/.../edge_operations.py`): the #1242 behaviour
+   was ported as a one-line gate rather than a full upgrade — the dedup-skip early-return now only fires
+   when there are **no applicable edge types** (`and not edge_types`), so first-time edges fall through to
+   type-classification + attribute extraction. Zero behaviour change when no edge ontology is passed.
+   Cost: one extra small-model `resolve_edge` call per first-time edge when edge types apply (the
+   documented #1242 trade-off). Pinned by `mcp_server/test_first_time_edge_attributes.py` (RED on the old
+   early-return, GREEN with the gate).
+3. **Still deferred**: recommendation 2 (graphiti-core 0.20.1 → ≥0.29.1) — would additionally bring the
+   attribute-hallucination guards (#1498) + `cap_string_attributes`, but requires reconciling this fork's
+   `graphiti_core/` reliability patches against upstream first.
 
 ## Cross-references
 
