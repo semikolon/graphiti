@@ -207,60 +207,57 @@ ENTITY_TYPES: dict[str, BaseModel] = {
 
 
 class MonetaryObligation(BaseModel):
-    """A debt, bill, invoice, fee, or recurring charge that one party owes or must pay another.
+    """A debt, bill, invoice, fee, or recurring charge: a relationship whose PRIMARY assertion is that one party owes or must pay a specific sum to another.
 
-    Use when a fact states that someone owes, is billed, is charged, or must pay a sum of
-    money: invoices, debts, inkasso claims, taxes due, subscription/membership fees.
+    Apply this type ONLY when the fact ITSELF states a sum owed or payable — an invoice amount, a
+    debt balance, an inkasso claim, a tax due, a subscription/membership fee.
 
-    Extraction instructions:
-    1. Only create this edge when the fact explicitly involves a sum of money owed or payable.
-    2. Record amount as a number only — strip currency symbols and thousands separators.
-    3. If a recurring/monthly amount is stated alongside a total, also set recurring_amount.
-    4. Use the date payment is DUE (not the issue/invoice date) for due_date.
-    5. Leave any field None if the fact does not state it — never guess.
+    Do NOT apply this type to a fact that merely MENTIONS a debt without itself asserting an amount —
+    e.g. who a debt is for, which child it concerns, that it was handed to a bureau, or any other
+    purely structural/relational statement. Those are not monetary obligations; let them stay the
+    DEFAULT relation.
+
+    Populate each field ONLY from what THIS fact itself states. Never import an amount or date from
+    surrounding sentences — if this fact does not itself assert the value, leave the field None.
     """
 
-    amount: float | None = Field(default=None, description='Total sum owed or payable, as a number (e.g. 32377.0). No currency symbol or separators.')
-    currency: str | None = Field(default=None, description="Short currency code, e.g. 'SEK', 'EUR'.")
-    due_date: datetime | None = Field(default=None, description='When payment is due.')
-    recurring_amount: float | None = Field(default=None, description='Per-period amount if this is a recurring charge (e.g. 519.0 per month).')
-    ocr: str | None = Field(default=None, description='Payment reference / OCR number, if stated.')
+    amount: float | None = Field(default=None, description='The sum THIS fact itself asserts as owed or payable, as a number (no currency symbol or separators). None if this fact does not itself state an amount.')
+    currency: str | None = Field(default=None, description="Short currency code (e.g. 'SEK'), only if this fact states it.")
+    due_date: datetime | None = Field(default=None, description='The payment due date, only if THIS fact states it.')
+    recurring_amount: float | None = Field(default=None, description='Per-period amount, only if THIS fact states a recurring charge (e.g. 519.0 per month).')
+    ocr: str | None = Field(default=None, description='Payment reference / OCR number, only if this fact states it.')
 
 
 class MonetaryTransfer(BaseModel):
-    """A one-off movement of money: a refund, payout, incentive, or single payment.
+    """A one-off movement of money whose PRIMARY assertion is that a specific sum moved once — a refund, payout, incentive, or single payment.
 
-    Use for a discrete sum that moves once (a tax refund, a survey incentive, a single
-    payment), as opposed to an ongoing obligation (use MonetaryObligation for debts/bills).
+    Apply this type ONLY when the fact ITSELF states a discrete sum that moves once (a tax refund of X,
+    a survey incentive of X, a single payment of X). For ongoing debts/bills use MonetaryObligation.
 
-    Extraction instructions:
-    1. Only create this edge when the fact describes a specific sum moving once.
-    2. amount is a number only (no currency symbol or separators).
-    3. direction is from the subject's perspective: 'inbound' (money received) or 'outbound' (money paid).
-    4. Set taxable only if the fact explicitly states tax status.
-    5. Leave any field None if not stated.
+    Do NOT apply this type to a fact that merely mentions money without itself asserting a one-off
+    transferred sum; let those stay the DEFAULT relation.
+
+    Populate each field ONLY from what THIS fact itself states; never import a value from surrounding
+    sentences.
     """
 
-    amount: float | None = Field(default=None, description='The sum transferred, as a number.')
-    currency: str | None = Field(default=None, description="Short currency code, e.g. 'SEK'.")
-    direction: str | None = Field(default=None, description="'inbound' (received) or 'outbound' (paid), from the subject's perspective.")
-    taxable: bool | None = Field(default=None, description='Whether the transfer is taxable — only if explicitly stated.')
+    amount: float | None = Field(default=None, description='The sum THIS fact asserts as transferred, as a number. None if this fact does not itself state a sum.')
+    currency: str | None = Field(default=None, description="Short currency code (e.g. 'SEK'), only if this fact states it.")
+    direction: str | None = Field(default=None, description="'inbound' (received) or 'outbound' (paid) from the subject's perspective, only if determinable from THIS fact.")
+    taxable: bool | None = Field(default=None, description='Whether the transfer is taxable, only if THIS fact explicitly states it.')
 
 
 class TemporalDeadline(BaseModel):
-    """A due date or deadline that one party sets for another (filing dates, response deadlines).
+    """A due date or deadline whose PRIMARY assertion is that one party set a date by which another must act — filing dates, response/dispute deadlines.
 
-    Use when a fact states a concrete deadline or due date for an action (a tax-return filing
-    date, a dispute/bestrida deadline, a respond-by date).
+    Apply this type ONLY when the fact ITSELF states a concrete deadline date for an action. Do NOT
+    apply it to a fact that merely references a date in passing; let those stay the DEFAULT relation.
 
-    Extraction instructions:
-    1. Only create this edge when the fact states a concrete deadline date.
-    2. status is the deadline's state relative to the episode reference time: 'upcoming', 'passed', or 'met' — only if determinable from the fact.
-    3. Leave fields None if not stated.
+    Populate each field ONLY from what THIS fact itself states.
     """
 
-    due_date: datetime | None = Field(default=None, description='The deadline / due date.')
-    status: str | None = Field(default=None, description="'upcoming', 'passed', or 'met' if determinable from the fact, else None.")
+    due_date: datetime | None = Field(default=None, description='The deadline / due date THIS fact states.')
+    status: str | None = Field(default=None, description="'upcoming', 'passed', or 'met' if determinable from THIS fact relative to the episode reference time, else None.")
 
 
 EDGE_TYPES: dict[str, BaseModel] = {
