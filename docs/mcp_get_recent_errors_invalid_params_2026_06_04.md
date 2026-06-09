@@ -1,5 +1,20 @@
 # MCP Tool `get_recent_errors` returns `-32602 Invalid request parameters`
 
+> **✅ RESOLVED 2026-06-09 (comprehensively).** The root cause is confirmed: FastMCP
+> rejects nullable-optional params (`X | None = None` → JSON-Schema `anyOf:[type,null]`)
+> with `-32602`, and a single poisoned request breaks the SSE session for all
+> subsequent calls (which is why even uuid-only tools failed after a `raw_cypher_query`).
+> Two-layer fix shipped:
+> 1. **Sentinel pattern applied to ALL 11 remaining affected tools** (not just
+>    `get_recent_errors`): `str | None = None → str = ""`, `dict | None = None → {}`,
+>    with `or None` coercion at use-sites. Commit `3a45266`.
+> 2. **mcp SDK upgraded 1.26.0 → 1.27.2** (`9e5b053`) + the previously-undeclared
+>    `falkordb` runtime dep fixed (`d136a6a`, it was hand-installed and pruned by
+>    `uv sync`). Daemon redeployed + import-gated; full unit suite green.
+>
+> The sentinel pattern is the durable defensive layer (works across MCP clients +
+> SDK versions); the upgrade is housekeeping. Original diagnosis retained below.
+
 **Date**: 2026-06-04
 **Affected tool**: `mcp__graphiti__get_recent_errors` (FastMCP-registered tool in `mcp_server/graphiti_mcp_server.py:1858-1875`)
 **Severity**: Functional — the tool cannot be invoked from Claude Code, blocking the documented "review errors that occurred while you were away or in Focus mode" use case.

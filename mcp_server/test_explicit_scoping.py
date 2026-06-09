@@ -24,13 +24,18 @@ from graphiti_mcp_server import (
 
 @pytest.fixture
 def mock_graphiti_client():
-    """Mock graphiti_client for testing."""
-    with patch('graphiti_mcp_server.graphiti_client') as mock:
-        mock_client = MagicMock()
-        mock_client.add_episode = AsyncMock()
-        mock_client._search = AsyncMock()
-        mock_client.search = AsyncMock()
-        mock.return_value = mock_client
+    """Mock graphiti_client for testing.
+
+    graphiti_client is a module global used DIRECTLY (not called as a factory),
+    so the patch must replace it WITH the configured client. The old form
+    (`with patch(...) as mock; mock.return_value = mock_client`) left the tools
+    using an unconfigured MagicMock whose async methods couldn't be awaited.
+    """
+    mock_client = MagicMock()
+    mock_client.add_episode = AsyncMock()
+    mock_client._search = AsyncMock()
+    mock_client.search = AsyncMock()
+    with patch('graphiti_mcp_server.graphiti_client', mock_client):
         yield mock_client
 
 
@@ -55,13 +60,13 @@ async def test_add_memory_uses_config_group_id(mock_graphiti_client, mock_config
     # Add memory without group_id parameter (should use config.group_id)
     result = await add_memory(
         name="Test Episode",
-        episode_body="Test content",
+        episode_body="Test content", ctx=None,
     )
 
     # Verify it went to "dotfiles" group
     # Note: Due to async queue processing, we verify the queue was created
-    assert result.message is not None
-    assert "Test Episode" in result.message
+    assert result['message'] is not None
+    assert "Test Episode" in result['message']
 
 
 @pytest.mark.asyncio
@@ -76,7 +81,7 @@ async def test_search_nodes_uses_config_group_id(mock_graphiti_client, mock_conf
     mock_graphiti_client._search.return_value = mock_result
 
     # Search without group_ids parameter
-    result = await search_nodes(query="test")
+    result = await search_nodes(query="test", ctx=None)
 
     # Verify search was called with config.group_id
     assert mock_graphiti_client._search.called
@@ -94,7 +99,7 @@ async def test_search_facts_uses_config_group_id(mock_graphiti_client, mock_conf
     mock_graphiti_client.search.return_value = []
 
     # Search without group_ids parameter
-    result = await search_facts(query="test")
+    result = await search_facts(query="test", ctx=None)
 
     # Verify search was called with config.group_id
     assert mock_graphiti_client.search.called
@@ -114,12 +119,12 @@ async def test_add_global_memory_uses_default_group(mock_graphiti_client, mock_c
     # Add global memory
     result = await add_global_memory(
         name="Global Episode",
-        episode_body="Global content",
+        episode_body="Global content", ctx=None,
     )
 
     # Verify it went to "default" group, NOT "dotfiles"
-    assert result.message is not None
-    assert "Global episode" in result.message
+    assert result['message'] is not None
+    assert "Global episode" in result['message']
 
 
 @pytest.mark.asyncio
@@ -134,7 +139,7 @@ async def test_search_global_nodes_uses_default_group(mock_graphiti_client, mock
     mock_graphiti_client._search.return_value = mock_result
 
     # Search global
-    result = await search_global_nodes(query="test")
+    result = await search_global_nodes(query="test", ctx=None)
 
     # Verify search was called with 'default' group, NOT config.group_id
     assert mock_graphiti_client._search.called
@@ -152,7 +157,7 @@ async def test_search_global_facts_uses_default_group(mock_graphiti_client, mock
     mock_graphiti_client.search.return_value = []
 
     # Search global
-    result = await search_global_facts(query="test")
+    result = await search_global_facts(query="test", ctx=None)
 
     # Verify search was called with 'default' group, NOT config.group_id
     assert mock_graphiti_client.search.called
@@ -169,10 +174,10 @@ async def test_cross_project_nodes_requires_projects(mock_graphiti_client, mock_
     # Empty list should error
     result = await search_cross_project_nodes(
         query="test",
-        projects=[]
+        projects=[], ctx=None
     )
-    assert hasattr(result, 'error')
-    assert "Must provide explicit list" in result.error
+    assert 'error' in result
+    assert "Must provide explicit list" in result['error']
 
 
 @pytest.mark.asyncio
@@ -187,7 +192,7 @@ async def test_cross_project_nodes_uses_explicit_projects(mock_graphiti_client, 
     projects = ["dotfiles", "kimonokittens", "brf-auto"]
     result = await search_cross_project_nodes(
         query="test",
-        projects=projects
+        projects=projects, ctx=None
     )
 
     # Verify search was called with explicit projects
@@ -202,10 +207,10 @@ async def test_cross_project_facts_requires_projects(mock_graphiti_client, mock_
     # Empty list should error
     result = await search_cross_project_facts(
         query="test",
-        projects=[]
+        projects=[], ctx=None
     )
-    assert hasattr(result, 'error')
-    assert "Must provide explicit list" in result.error
+    assert 'error' in result
+    assert "Must provide explicit list" in result['error']
 
 
 @pytest.mark.asyncio
@@ -218,7 +223,7 @@ async def test_cross_project_facts_uses_explicit_projects(mock_graphiti_client, 
     projects = ["dotfiles", "kimonokittens", "brf-auto"]
     result = await search_cross_project_facts(
         query="test",
-        projects=projects
+        projects=projects, ctx=None
     )
 
     # Verify search was called with explicit projects
@@ -242,7 +247,7 @@ async def test_project_isolation_scenario(mock_graphiti_client, mock_config):
     mock_graphiti_client._search.return_value = mock_result
 
     # Search in dotfiles project
-    result_dotfiles = await search_nodes(query="test")
+    result_dotfiles = await search_nodes(query="test", ctx=None)
 
     # Verify search was scoped to dotfiles
     call_args_1 = mock_graphiti_client._search.call_args
@@ -252,7 +257,7 @@ async def test_project_isolation_scenario(mock_graphiti_client, mock_config):
     mock_config.group_id = "kimonokittens"
 
     # Search in kimonokittens project
-    result_kimonokittens = await search_nodes(query="test")
+    result_kimonokittens = await search_nodes(query="test", ctx=None)
 
     # Verify search was scoped to kimonokittens, NOT dotfiles
     call_args_2 = mock_graphiti_client._search.call_args
@@ -275,7 +280,7 @@ async def test_cross_project_comparison_scenario(mock_graphiti_client, mock_conf
     projects = ["dotfiles", "kimonokittens", "brf-auto"]
     result = await search_cross_project_nodes(
         query="authentication implementation",
-        projects=projects
+        projects=projects, ctx=None
     )
 
     # Verify search included all specified projects, not just config.group_id
