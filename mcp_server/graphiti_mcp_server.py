@@ -923,8 +923,8 @@ async def add_memory(
     ctx: Context,
     source: str = 'text',
     source_description: str = '',
-    uuid: str | None = None,
-    valid_at: str | None = None,  # Hidden param: ISO datetime string for historical entries
+    uuid: str = "",
+    valid_at: str = "",  # Hidden param: ISO datetime string for historical entries
 ) -> SuccessResponse | ErrorResponse:
     """Add episode to CURRENT PROJECT memory graph.
 
@@ -1038,7 +1038,7 @@ async def add_memory(
                     source=source_type,
                     source_description=source_description,
                     group_id=group_id_str,  # Using the string version of group_id
-                    uuid=uuid,
+                    uuid=uuid or None,
                     reference_time=effective_reference_time,
                     entity_types=entity_types,
                 )
@@ -1085,8 +1085,8 @@ async def add_global_memory(
     ctx: Context,
     source: str = 'text',
     source_description: str = '',
-    uuid: str | None = None,
-    valid_at: str | None = None,  # Hidden param: ISO datetime string for historical entries
+    uuid: str = "",
+    valid_at: str = "",  # Hidden param: ISO datetime string for historical entries
 ) -> SuccessResponse | ErrorResponse:
     """Add episode to GLOBAL memory graph (shared across all projects).
 
@@ -1169,7 +1169,7 @@ async def add_global_memory(
                     source=source_type,
                     source_description=source_description,
                     group_id=group_id_str,
-                    uuid=uuid,
+                    uuid=uuid or None,
                     reference_time=effective_reference_time,
                     entity_types=entity_types,
                 )
@@ -1209,7 +1209,7 @@ async def search_nodes(
     query: str,
     ctx: Context,
     max_nodes: int = 10,
-    center_node_uuid: str | None = None,
+    center_node_uuid: str = "",
     entity: str = '',  # cursor seems to break with None
 ) -> NodeSearchResponse | ErrorResponse:
     """Search nodes in CURRENT PROJECT memory graph.
@@ -1257,7 +1257,7 @@ async def search_nodes(
             query=query,
             config=search_config,
             group_ids=effective_group_ids,
-            center_node_uuid=center_node_uuid,
+            center_node_uuid=center_node_uuid or None,
             search_filter=filters,
         )
 
@@ -1290,7 +1290,7 @@ async def search_global_nodes(
     query: str,
     ctx: Context,
     max_nodes: int = 10,
-    center_node_uuid: str | None = None,
+    center_node_uuid: str = "",
     entity: str = '',
 ) -> NodeSearchResponse | ErrorResponse:
     """Search nodes in GLOBAL memory graph (shared across all projects).
@@ -1337,7 +1337,7 @@ async def search_global_nodes(
             query=query,
             config=search_config,
             group_ids=effective_group_ids,
-            center_node_uuid=center_node_uuid,
+            center_node_uuid=center_node_uuid or None,
             search_filter=filters,
         )
 
@@ -1359,7 +1359,7 @@ async def search_facts(
     query: str,
     ctx: Context,
     max_facts: int = 10,
-    center_node_uuid: str | None = None,
+    center_node_uuid: str = "",
 ) -> FactSearchResponse | ErrorResponse:
     """Search facts in CURRENT PROJECT memory graph.
 
@@ -1395,7 +1395,7 @@ async def search_facts(
             group_ids=effective_group_ids,
             query=query,
             num_results=max_facts,
-            center_node_uuid=center_node_uuid,
+            center_node_uuid=center_node_uuid or None,
         )
 
         if not relevant_edges:
@@ -1414,7 +1414,7 @@ async def search_global_facts(
     query: str,
     ctx: Context,
     max_facts: int = 10,
-    center_node_uuid: str | None = None,
+    center_node_uuid: str = "",
 ) -> FactSearchResponse | ErrorResponse:
     """Search facts in GLOBAL memory graph (shared across all projects).
 
@@ -1449,7 +1449,7 @@ async def search_global_facts(
             group_ids=effective_group_ids,
             query=query,
             num_results=max_facts,
-            center_node_uuid=center_node_uuid,
+            center_node_uuid=center_node_uuid or None,
         )
 
         if not relevant_edges:
@@ -1469,7 +1469,7 @@ async def search_cross_project_nodes(
     projects: list[str],
     ctx: Context,
     max_nodes: int = 10,
-    center_node_uuid: str | None = None,
+    center_node_uuid: str = "",
     entity: str = '',
 ) -> NodeSearchResponse | ErrorResponse:
     """Search nodes across MULTIPLE PROJECTS.
@@ -1527,7 +1527,7 @@ async def search_cross_project_nodes(
             query=query,
             config=search_config,
             group_ids=effective_group_ids,
-            center_node_uuid=center_node_uuid,
+            center_node_uuid=center_node_uuid or None,
             search_filter=filters,
         )
 
@@ -1553,7 +1553,7 @@ async def search_cross_project_facts(
     projects: list[str],
     ctx: Context,
     max_facts: int = 10,
-    center_node_uuid: str | None = None,
+    center_node_uuid: str = "",
 ) -> FactSearchResponse | ErrorResponse:
     """Search facts across MULTIPLE PROJECTS.
 
@@ -1599,7 +1599,7 @@ async def search_cross_project_facts(
             group_ids=effective_group_ids,
             query=query,
             num_results=max_facts,
-            center_node_uuid=center_node_uuid,
+            center_node_uuid=center_node_uuid or None,
         )
 
         if not relevant_edges:
@@ -1725,7 +1725,7 @@ async def get_entity_edge(uuid: str, ctx: Context) -> dict[str, Any] | ErrorResp
 @mcp.tool()
 async def get_episodes(
     ctx: Context,
-    group_id: str | None = None,
+    group_id: str = "",
     last_n: int = 10,
 ) -> list[dict[str, Any]] | EpisodeSearchResponse | ErrorResponse:
     """Get the most recent memory episodes for CURRENT PROJECT.
@@ -1744,7 +1744,7 @@ async def get_episodes(
 
     try:
         # Use the provided group_id or fall back to the SSE context (project-scoped)
-        effective_group_id = group_id if group_id is not None else get_effective_group_id(ctx)
+        effective_group_id = group_id if group_id else get_effective_group_id(ctx)
 
         if not isinstance(effective_group_id, str):
             return ErrorResponse(error='Group ID must be a string')
@@ -1896,7 +1896,7 @@ async def get_recent_errors(
 async def raw_cypher_query(
     query: str,
     ctx: Context,
-    params: dict[str, Any] | None = None,
+    params: dict[str, Any] = {},  # noqa: B006 — FastMCP rejects nullable optionals (-32602)
     max_results: int = 50,
 ) -> list[dict[str, Any]] | ErrorResponse:
     """Execute a raw Cypher query against the graph database.
@@ -1990,7 +1990,7 @@ async def raw_cypher_query(
 async def cypher_query_write(
     query: str,
     ctx: Context,
-    params: dict[str, Any] | None = None,
+    params: dict[str, Any] = {},  # noqa: B006 — FastMCP rejects nullable optionals (-32602)
     max_results: int = 10000,
 ) -> list[dict[str, Any]] | ErrorResponse:
     """Execute a write-capable Cypher query against the user's group-scoped graph.
