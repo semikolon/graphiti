@@ -62,6 +62,12 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.openai_client import OpenAIClient
 from graphiti_core.nodes import EpisodeType, EpisodicNode
 from graphiti_core.search.search_config_recipes import (
+    EDGE_HYBRID_SEARCH_CROSS_ENCODER,
+    EDGE_HYBRID_SEARCH_MMR,
+    EDGE_HYBRID_SEARCH_NODE_DISTANCE,
+    EDGE_HYBRID_SEARCH_RRF,
+    NODE_HYBRID_SEARCH_CROSS_ENCODER,
+    NODE_HYBRID_SEARCH_MMR,
     NODE_HYBRID_SEARCH_NODE_DISTANCE,
     NODE_HYBRID_SEARCH_RRF,
 )
@@ -1297,12 +1303,72 @@ async def add_global_memory(
         return ErrorResponse(error=f'Error queuing global episode task: {error_msg}')
 
 
+# ---------------------------------------------------------------------------
+# Reranker selection for the search tools (graph-RAG retrieval tiers).
+# Empty string = default behaviour (node-distance when a center node is given,
+# else RRF) — preserves prior behaviour. Sentinel-safe per the -32602 lesson:
+# the param is `str = ""`, never `str | None`. See CLAUDE.md § Retrieval tiers.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_node_search_config(reranker: str, center_node_uuid: str, limit: int):
+    """Pick a node SearchConfig for the requested reranker.
+
+    Returns (config, None) on success or (None, error_message) on a bad request.
+    """
+    r = (reranker or '').strip().lower().replace('-', '_')
+    table = {
+        'rrf': NODE_HYBRID_SEARCH_RRF,
+        'mmr': NODE_HYBRID_SEARCH_MMR,
+        'cross_encoder': NODE_HYBRID_SEARCH_CROSS_ENCODER,
+        'node_distance': NODE_HYBRID_SEARCH_NODE_DISTANCE,
+    }
+    if r == '':
+        recipe = NODE_HYBRID_SEARCH_NODE_DISTANCE if center_node_uuid else NODE_HYBRID_SEARCH_RRF
+    elif r in table:
+        recipe = table[r]
+    else:
+        return None, f"Unknown reranker '{reranker}'. Valid: rrf, mmr, cross_encoder, node_distance."
+    if recipe is NODE_HYBRID_SEARCH_NODE_DISTANCE and not center_node_uuid:
+        return None, "reranker 'node_distance' requires center_node_uuid."
+    cfg = recipe.model_copy(deep=True)
+    cfg.limit = limit
+    return cfg, None
+
+
+def _resolve_edge_search_config(reranker: str, center_node_uuid: str, limit: int):
+    """Pick an edge/fact SearchConfig for the requested reranker.
+
+    Returns (config, None) to use that config, (None, None) to fall back to the
+    default ``client.search()`` path (reranker unspecified), or (None, error) on a
+    bad request.
+    """
+    r = (reranker or '').strip().lower().replace('-', '_')
+    if r == '':
+        return None, None
+    table = {
+        'rrf': EDGE_HYBRID_SEARCH_RRF,
+        'mmr': EDGE_HYBRID_SEARCH_MMR,
+        'cross_encoder': EDGE_HYBRID_SEARCH_CROSS_ENCODER,
+        'node_distance': EDGE_HYBRID_SEARCH_NODE_DISTANCE,
+    }
+    if r not in table:
+        return None, f"Unknown reranker '{reranker}'. Valid: rrf, mmr, cross_encoder, node_distance."
+    recipe = table[r]
+    if recipe is EDGE_HYBRID_SEARCH_NODE_DISTANCE and not center_node_uuid:
+        return None, "reranker 'node_distance' requires center_node_uuid."
+    cfg = recipe.model_copy(deep=True)
+    cfg.limit = limit
+    return cfg, None
+
+
 @mcp.tool()
 async def search_nodes(
     query: str,
     ctx: Context,
     max_nodes: int = 10,
     center_node_uuid: str = "",
+    reranker: str = "",
     entity: str = '',  # cursor seems to break with None
 ) -> NodeSearchResponse | ErrorResponse:
     """Search nodes in CURRENT PROJECT memory graph.
@@ -1316,6 +1382,7 @@ async def search_nodes(
         query: The search query
         max_nodes: Maximum number of nodes to return (default: 10)
         center_node_uuid: Optional UUID of a node to center the search around
+        reranker: Reranking strategy — "rrf" (default), "mmr" (diversity; dedups near-identical results), "cross_encoder" (highest precision), or "node_distance" (requires center_node_uuid). Empty = node_distance if centered, else rrf.
         entity: Optional single entity type to filter results (permitted: "Preference", "Procedure")
     """
     global graphiti_client
@@ -1328,12 +1395,11 @@ async def search_nodes(
         effective_group_id = get_effective_group_id(ctx)
         effective_group_ids = [effective_group_id]
 
-        # Configure the search
-        if center_node_uuid:
-            search_config = NODE_HYBRID_SEARCH_NODE_DISTANCE.model_copy(deep=True)
-        else:
-            search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
-        search_config.limit = max_nodes
+        # Configure the search (reranker: rrf / mmr / cross_encoder / node_distance;
+        # default = node-distance when centered, else rrf)
+        search_config, rerank_err = _resolve_node_search_config(reranker, center_node_uuid, max_nodes)
+        if rerank_err:
+            return ErrorResponse(error=rerank_err)
 
         filters = SearchFilters()
         if entity != '':
@@ -1384,6 +1450,7 @@ async def search_global_nodes(
     ctx: Context,
     max_nodes: int = 10,
     center_node_uuid: str = "",
+    reranker: str = "",
     entity: str = '',
 ) -> NodeSearchResponse | ErrorResponse:
     """Search nodes in GLOBAL memory graph (shared across all projects).
@@ -1397,6 +1464,7 @@ async def search_global_nodes(
         query: The search query
         max_nodes: Maximum number of nodes to return (default: 10)
         center_node_uuid: Optional UUID of a node to center the search around
+        reranker: Reranking strategy — "rrf" (default), "mmr" (diversity; dedups near-identical results), "cross_encoder" (highest precision), or "node_distance" (requires center_node_uuid). Empty = node_distance if centered, else rrf.
         entity: Optional single entity type to filter results (permitted: "Preference", "Procedure")
     """
     global graphiti_client
@@ -1408,12 +1476,11 @@ async def search_global_nodes(
         # Use HARDCODED 'default' for global scoping
         effective_group_ids = ["default"]
 
-        # Configure the search
-        if center_node_uuid:
-            search_config = NODE_HYBRID_SEARCH_NODE_DISTANCE.model_copy(deep=True)
-        else:
-            search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
-        search_config.limit = max_nodes
+        # Configure the search (reranker: rrf / mmr / cross_encoder / node_distance;
+        # default = node-distance when centered, else rrf)
+        search_config, rerank_err = _resolve_node_search_config(reranker, center_node_uuid, max_nodes)
+        if rerank_err:
+            return ErrorResponse(error=rerank_err)
 
         filters = SearchFilters()
         if entity != '':
@@ -1453,6 +1520,7 @@ async def search_facts(
     ctx: Context,
     max_facts: int = 10,
     center_node_uuid: str = "",
+    reranker: str = "",
 ) -> FactSearchResponse | ErrorResponse:
     """Search facts in CURRENT PROJECT memory graph.
 
@@ -1463,6 +1531,7 @@ async def search_facts(
         query: The search query
         max_facts: Maximum number of facts to return (default: 10)
         center_node_uuid: Optional UUID of a node to center the search around
+        reranker: Reranking strategy — "rrf" (default), "mmr" (diversity; dedups near-identical results), "cross_encoder" (highest precision), or "node_distance" (requires center_node_uuid). Empty = node_distance if centered, else rrf.
     """
     global graphiti_client
 
@@ -1484,12 +1553,27 @@ async def search_facts(
         # Use cast to help the type checker understand that graphiti_client is not None
         client = cast(Graphiti, graphiti_client)
 
-        relevant_edges = await client.search(
-            group_ids=effective_group_ids,
-            query=query,
-            num_results=max_facts,
-            center_node_uuid=center_node_uuid or None,
-        )
+        # Reranker selection (mmr / cross_encoder / node_distance) routes through
+        # _search with the matching EDGE recipe; default (empty) keeps client.search().
+        rerank_cfg, rerank_err = _resolve_edge_search_config(reranker, center_node_uuid, max_facts)
+        if rerank_err:
+            return ErrorResponse(error=rerank_err)
+        if rerank_cfg is not None:
+            edge_results = await client._search(
+                query=query,
+                config=rerank_cfg,
+                group_ids=effective_group_ids,
+                center_node_uuid=center_node_uuid or None,
+                search_filter=SearchFilters(),
+            )
+            relevant_edges = edge_results.edges
+        else:
+            relevant_edges = await client.search(
+                group_ids=effective_group_ids,
+                query=query,
+                num_results=max_facts,
+                center_node_uuid=center_node_uuid or None,
+            )
 
         if not relevant_edges:
             return FactSearchResponse(message='No relevant facts found', facts=[])
@@ -1508,6 +1592,7 @@ async def search_global_facts(
     ctx: Context,
     max_facts: int = 10,
     center_node_uuid: str = "",
+    reranker: str = "",
 ) -> FactSearchResponse | ErrorResponse:
     """Search facts in GLOBAL memory graph (shared across all projects).
 
@@ -1518,6 +1603,7 @@ async def search_global_facts(
         query: The search query
         max_facts: Maximum number of facts to return (default: 10)
         center_node_uuid: Optional UUID of a node to center the search around
+        reranker: Reranking strategy — "rrf" (default), "mmr" (diversity; dedups near-identical results), "cross_encoder" (highest precision), or "node_distance" (requires center_node_uuid). Empty = node_distance if centered, else rrf.
     """
     global graphiti_client
 
@@ -1538,12 +1624,27 @@ async def search_global_facts(
         # Use cast to help the type checker understand that graphiti_client is not None
         client = cast(Graphiti, graphiti_client)
 
-        relevant_edges = await client.search(
-            group_ids=effective_group_ids,
-            query=query,
-            num_results=max_facts,
-            center_node_uuid=center_node_uuid or None,
-        )
+        # Reranker selection (mmr / cross_encoder / node_distance) routes through
+        # _search with the matching EDGE recipe; default (empty) keeps client.search().
+        rerank_cfg, rerank_err = _resolve_edge_search_config(reranker, center_node_uuid, max_facts)
+        if rerank_err:
+            return ErrorResponse(error=rerank_err)
+        if rerank_cfg is not None:
+            edge_results = await client._search(
+                query=query,
+                config=rerank_cfg,
+                group_ids=effective_group_ids,
+                center_node_uuid=center_node_uuid or None,
+                search_filter=SearchFilters(),
+            )
+            relevant_edges = edge_results.edges
+        else:
+            relevant_edges = await client.search(
+                group_ids=effective_group_ids,
+                query=query,
+                num_results=max_facts,
+                center_node_uuid=center_node_uuid or None,
+            )
 
         if not relevant_edges:
             return FactSearchResponse(message='No relevant global facts found', facts=[])
@@ -1563,6 +1664,7 @@ async def search_cross_project_nodes(
     ctx: Context,
     max_nodes: int = 10,
     center_node_uuid: str = "",
+    reranker: str = "",
     entity: str = '',
 ) -> NodeSearchResponse | ErrorResponse:
     """Search nodes across MULTIPLE PROJECTS.
@@ -1583,6 +1685,7 @@ async def search_cross_project_nodes(
         projects: REQUIRED - explicit list of project group_ids to search
         max_nodes: Maximum number of nodes to return (default: 10)
         center_node_uuid: Optional UUID of a node to center the search around
+        reranker: Reranking strategy — "rrf" (default), "mmr" (diversity; dedups near-identical results), "cross_encoder" (highest precision), or "node_distance" (requires center_node_uuid). Empty = node_distance if centered, else rrf.
         entity: Optional single entity type to filter results (permitted: "Preference", "Procedure")
     """
     global graphiti_client
@@ -1598,12 +1701,11 @@ async def search_cross_project_nodes(
         # Use explicit project list for cross-project scoping
         effective_group_ids = projects
 
-        # Configure the search
-        if center_node_uuid:
-            search_config = NODE_HYBRID_SEARCH_NODE_DISTANCE.model_copy(deep=True)
-        else:
-            search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
-        search_config.limit = max_nodes
+        # Configure the search (reranker: rrf / mmr / cross_encoder / node_distance;
+        # default = node-distance when centered, else rrf)
+        search_config, rerank_err = _resolve_node_search_config(reranker, center_node_uuid, max_nodes)
+        if rerank_err:
+            return ErrorResponse(error=rerank_err)
 
         filters = SearchFilters()
         if entity != '':
@@ -1647,6 +1749,7 @@ async def search_cross_project_facts(
     ctx: Context,
     max_facts: int = 10,
     center_node_uuid: str = "",
+    reranker: str = "",
 ) -> FactSearchResponse | ErrorResponse:
     """Search facts across MULTIPLE PROJECTS.
 
@@ -1664,6 +1767,7 @@ async def search_cross_project_facts(
         projects: REQUIRED - explicit list of project group_ids to search
         max_facts: Maximum number of facts to return (default: 10)
         center_node_uuid: Optional UUID of a node to center the search around
+        reranker: Reranking strategy — "rrf" (default), "mmr" (diversity; dedups near-identical results), "cross_encoder" (highest precision), or "node_distance" (requires center_node_uuid). Empty = node_distance if centered, else rrf.
     """
     global graphiti_client
 
@@ -1688,12 +1792,27 @@ async def search_cross_project_facts(
         # Use cast to help the type checker understand that graphiti_client is not None
         client = cast(Graphiti, graphiti_client)
 
-        relevant_edges = await client.search(
-            group_ids=effective_group_ids,
-            query=query,
-            num_results=max_facts,
-            center_node_uuid=center_node_uuid or None,
-        )
+        # Reranker selection (mmr / cross_encoder / node_distance) routes through
+        # _search with the matching EDGE recipe; default (empty) keeps client.search().
+        rerank_cfg, rerank_err = _resolve_edge_search_config(reranker, center_node_uuid, max_facts)
+        if rerank_err:
+            return ErrorResponse(error=rerank_err)
+        if rerank_cfg is not None:
+            edge_results = await client._search(
+                query=query,
+                config=rerank_cfg,
+                group_ids=effective_group_ids,
+                center_node_uuid=center_node_uuid or None,
+                search_filter=SearchFilters(),
+            )
+            relevant_edges = edge_results.edges
+        else:
+            relevant_edges = await client.search(
+                group_ids=effective_group_ids,
+                query=query,
+                num_results=max_facts,
+                center_node_uuid=center_node_uuid or None,
+            )
 
         if not relevant_edges:
             return FactSearchResponse(
@@ -1710,6 +1829,55 @@ async def search_cross_project_facts(
         error_msg = str(e)
         logger.error(f'Error searching cross-project facts: {error_msg}')
         return ErrorResponse(error=f'Error searching cross-project facts: {error_msg}')
+
+
+class CommunityBuildResponse(TypedDict):
+    message: str
+    communities: list[dict]
+
+
+@mcp.tool()
+async def build_communities(ctx: Context) -> CommunityBuildResponse | ErrorResponse:
+    """Detect entity communities in the CURRENT PROJECT graph + generate community summaries.
+
+    This is the "themes across everything / overview" layer (graph-RAG community tier).
+    Clusters strongly-connected entities (label-propagation) and writes one Community node per
+    cluster with an LLM-generated summary collating its members, then returns those summaries
+    for a quick overview. Run after a meaningful corpus exists; re-run periodically to
+    re-optimize grouping. Cost scales with community count (one LLM summary each), so this is a
+    deliberate, occasional operation — not a per-query call. FalkorDB-verified 2026-06-10.
+
+    Scope: uses the connection's effective group_id (current project).
+    """
+    global graphiti_client
+
+    if graphiti_client is None:
+        return ErrorResponse(error='Graphiti client not initialized')
+
+    try:
+        effective_group_id = get_effective_group_id(ctx)
+        client = cast(Graphiti, graphiti_client)
+
+        community_nodes, _community_edges = await client.build_communities(
+            group_ids=[effective_group_id]
+        )
+
+        communities = [
+            {
+                'uuid': c.uuid,
+                'name': c.name,
+                'summary': c.summary if hasattr(c, 'summary') else '',
+            }
+            for c in community_nodes
+        ]
+        return CommunityBuildResponse(
+            message=f'Built {len(communities)} communities for group {effective_group_id}',
+            communities=communities,
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f'Error building communities: {error_msg}')
+        return ErrorResponse(error=f'Error building communities: {error_msg}')
 
 
 @mcp.tool()
