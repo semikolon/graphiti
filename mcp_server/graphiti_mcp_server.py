@@ -1333,6 +1333,12 @@ def _resolve_node_search_config(reranker: str, center_node_uuid: str, limit: int
         return None, "reranker 'node_distance' requires center_node_uuid."
     cfg = recipe.model_copy(deep=True)
     cfg.limit = limit
+    if r == 'mmr':
+        # MMR reorders for diversity; the recipe's default reranker_min_score=0 drops
+        # candidates whose marginal score < 0 (the MMR score floors at -1 and goes negative
+        # as soon as results are mutually similar — which empties small/cohesive result sets,
+        # FalkorDB-verified 2026-06-10). Lower the floor so MMR keeps + reorders, not drops.
+        cfg.reranker_min_score = -2.0
     return cfg, None
 
 
@@ -1359,6 +1365,12 @@ def _resolve_edge_search_config(reranker: str, center_node_uuid: str, limit: int
         return None, "reranker 'node_distance' requires center_node_uuid."
     cfg = recipe.model_copy(deep=True)
     cfg.limit = limit
+    if r == 'mmr':
+        # MMR reorders for diversity; the recipe's default reranker_min_score=0 drops
+        # candidates whose marginal score < 0 (the MMR score floors at -1 and goes negative
+        # as soon as results are mutually similar — which empties small/cohesive result sets,
+        # FalkorDB-verified 2026-06-10). Lower the floor so MMR keeps + reorders, not drops.
+        cfg.reranker_min_score = -2.0
     return cfg, None
 
 

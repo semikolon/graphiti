@@ -38,7 +38,10 @@ def test_node_default_centered_is_node_distance():
 def test_node_mmr():
     cfg, err = _resolve_node_search_config('mmr', '', 5)
     assert err is None
-    assert cfg.model_dump() == _dump(NODE_HYBRID_SEARCH_MMR, 5)
+    expected = NODE_HYBRID_SEARCH_MMR.model_copy(deep=True)
+    expected.limit = 5
+    expected.reranker_min_score = -2.0  # MMR keeps + reorders, doesn't drop (see helper)
+    assert cfg.model_dump() == expected.model_dump()
 
 
 def test_node_cross_encoder_hyphen_alias():
@@ -75,7 +78,10 @@ def test_edge_default_falls_through_to_client_search():
 def test_edge_mmr():
     cfg, err = _resolve_edge_search_config('mmr', '', 5)
     assert err is None
-    assert cfg.model_dump() == _dump(EDGE_HYBRID_SEARCH_MMR, 5)
+    expected = EDGE_HYBRID_SEARCH_MMR.model_copy(deep=True)
+    expected.limit = 5
+    expected.reranker_min_score = -2.0  # MMR keeps + reorders, doesn't drop (see helper)
+    assert cfg.model_dump() == expected.model_dump()
 
 
 def test_edge_cross_encoder():
