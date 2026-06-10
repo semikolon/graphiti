@@ -143,6 +143,16 @@ When working with the MCP server, follow the patterns established in `mcp_server
 - Store new information immediately using `add_memory`
 - Follow discovered procedures and respect established preferences
 
+### Retrieval tiers — what the MCP exposes vs what graphiti-core ships (graph RAG)
+
+Every `search_facts`/`search_nodes` call whose hits feed an LLM answer IS graph RAG (hybrid BM25 + vector + graph traversal augmenting generation) — the basic, single-shot tier. graphiti-core ships richer tiers we don't fully expose:
+
+- **Node-distance reranking** — ALREADY exposed: `search_nodes`/`search_facts` accept `center_node_uuid`; pass it and results rerank by graph proximity (the `NODE_HYBRID_SEARCH_NODE_DISTANCE` recipe, `graphiti_mcp_server.py:1332`). Pattern: search → grab the entity uuid → re-search centered on it = associative "everything connected to X".
+- **MMR reranker** (Maximal Marginal Relevance — relevance × diversity, kills near-duplicate facts) and **cross-encoder reranker** (joint query-result scoring, higher precision) — recipes exist in `graphiti_core/search/search_config_recipes.py` (`*_HYBRID_SEARCH_MMR` / `_CROSS_ENCODER`) but are NOT selectable from the MCP search tools (only RRF + NODE_DISTANCE are wired). Exposing a `reranker` param is a small addition. MMR's diversity uses cosine over the existing Qwen3 embeddings (Darwin :8080) — no new model; cross-encoder needs a separate reranker (OpenAI/Gemini/local BGE).
+- **`build_communities`** (label-propagation, `graphiti_core/utils/maintenance/community_operations.py`) + community search recipes — NOT exposed as an MCP tool. The "themes across everything / overview" enabler.
+
+**Gate before implementing any of these (2026-06-10):** the fork runs graphiti-core **0.20.1**; upstream is **0.29.2** (combined extraction, attribute-hallucination guards #1498, MCP core-parity #1553 which already exposes edge types + search/community config). Decide reintegrate-onto-upstream-first vs implement-on-fork BEFORE building reranker/community/HippoRAG tools — see the divergence + reintegration research (`docs/`, pending 2026-06-10) and `~/dotfiles/docs/graphiti_upstream_review_2026_03_15.md` (§ Fork-Specific Reliability Fixes). DIM's consumer-side verdict: `~/Projects/din-mamma/docs/research/graphrag_landscape_second_pass_2026_06_09.md`.
+
 ### Custom Cypher Tools (fork additions)
 
 The fork adds two Cypher-level tools beyond standard MCP — choose by intent, not convenience:
